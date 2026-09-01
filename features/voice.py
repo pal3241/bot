@@ -4,6 +4,7 @@ from core.context import AppContext
 from core.io import ainput, pilih_server
 from core.registry import feature
 from voice.manager import VoiceManager
+from voice.queue import TTSQueue
 from voice.registry import PROVIDERS
 
 
@@ -68,17 +69,27 @@ async def terminal_tts(ctx: AppContext, manager: VoiceManager) -> None:
     if voice_client is None:
         return
 
-    print("\nKetik teks yang ingin diucapkan bot.")
-    print("Ketik exit untuk kembali.\n")
-    while True:
-        text: str = await ainput("TTS > ")
-        if text.strip().lower() == "exit":
-            return
-        if not text.strip():
-            print("Teks kosong tidak diproses.")
-            continue
-        await manager.speak(voice_client, text)
-        print("VOICE > selesai diucapkan")
+    queue: TTSQueue = TTSQueue(manager, voice_client)
+    queue.start()
+    print("\nKetik teks yang ingin dimasukkan ke TTS queue.")
+    print("Anda dapat terus mengetik selama bot berbicara.")
+    print("Ketik exit untuk menunggu antrean selesai dan kembali.\n")
+    try:
+        while True:
+            queue.raise_worker_error()
+            text: str = await ainput("TTS > ")
+            if text.strip().lower() == "exit":
+                print("Menunggu TTS queue selesai...")
+                await queue.finish()
+                return
+            if not text.strip():
+                print("Teks kosong tidak diproses.")
+                continue
+            posisi: int = await queue.enqueue(text)
+            print(f"QUEUE > ditambahkan, menunggu={posisi}")
+    finally:
+        if queue.worker is not None and not queue.worker.done():
+            await queue.finish()
 
 
 async def pilih_provider(manager: VoiceManager) -> None:
@@ -140,7 +151,7 @@ async def voice_feature(ctx: AppContext) -> None:
         print("\n1. Pilih server")
         print("2. Pilih voice channel")
         print("3. Join VC")
-        print("4. Terminal TTS")
+        print("4. Terminal TTS Queue")
         print("5. Pilih TTS Engine")
         print("6. Pilih bahasa")
         print("7. Disconnect")
