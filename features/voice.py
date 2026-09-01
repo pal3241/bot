@@ -11,6 +11,7 @@ from voice.models import RVCModel, delete_model, get_model, import_model, list_m
 from voice.queue import TTSQueue
 from voice.registry import PROVIDERS
 from voice.converters.registry import CONVERTERS
+from voice.converters.rvc_converter import RVCConverter
 from voice.converters.settings import (
     VoiceConverterSettings,
     set_converter,
@@ -20,6 +21,7 @@ from voice.converters.settings import (
     set_pitch,
     set_protect,
 )
+from voice.converters.w_okada_client import WOkadaModel
 
 
 async def pilih_voice_channel(ctx: AppContext) -> discord.VoiceChannel | None:
@@ -179,6 +181,9 @@ async def pilih_converter(manager: VoiceManager) -> None:
 
 
 async def pilih_model(manager: VoiceManager) -> None:
+    if isinstance(manager.converter, RVCConverter):
+        await pilih_model_w_okada(manager, manager.converter)
+        return
     models: list[RVCModel] = list_models(RVC_MODELS_FOLDER)
     print("\n" + "=" * 40)
     print("MODEL RVC")
@@ -203,6 +208,41 @@ async def pilih_model(manager: VoiceManager) -> None:
             )
             manager.set_converter_settings(settings)
             print(f"Model aktif: {models[index].name}")
+            return
+        print("Pilihan tidak valid.")
+
+
+async def pilih_model_w_okada(
+    manager: VoiceManager,
+    converter: RVCConverter,
+) -> None:
+    models: list[WOkadaModel] = await converter.list_models()
+    print("\n" + "=" * 40)
+    print("MODEL RVC W-OKADA")
+    print("=" * 40)
+    if not models:
+        print("Backend w-okada belum memiliki model RVC.")
+        return
+    for nomor, model in enumerate(models, start=1):
+        print(f"{nomor}. slot={model.slot_index} | {model.name} | {model.model_file}")
+    print("\nKetik exit untuk batal.")
+    while True:
+        pilihan: str = (await ainput("\nPilih model backend: ")).strip()
+        if pilihan.lower() == "exit":
+            return
+        try:
+            index: int = int(pilihan) - 1
+        except ValueError:
+            print("Pilihan tidak valid.")
+            continue
+        if 0 <= index < len(models):
+            selected: WOkadaModel = models[index]
+            settings: VoiceConverterSettings = set_model(
+                manager.converter_settings,
+                str(selected.slot_index),
+            )
+            manager.set_converter_settings(settings)
+            print(f"Model backend aktif: slot={selected.slot_index} | {selected.name}")
             return
         print("Pilihan tidak valid.")
 

@@ -1,0 +1,270 @@
+# Discord Bot Manager
+
+Bot Discord berbasis terminal dengan fitur berikut:
+
+- Emoji Manager untuk upload, melihat, dan menghapus emoji.
+- Terminal Chat dua arah antara terminal dan channel Discord.
+- Voice TTS Queue untuk membacakan teks di voice channel.
+- Fondasi Voice Converter modular untuk RVC/w-okada.
+- Model Manager untuk mengimpor dan mengelola model RVC.
+
+## Persyaratan
+
+- Python 3.13 atau versi yang kompatibel.
+- FFmpeg tersedia melalui `PATH`.
+- Bot Discord dengan permission yang sesuai.
+- Koneksi internet untuk Discord dan gTTS.
+
+Periksa FFmpeg:
+
+```powershell
+ffmpeg -version
+```
+
+## Instalasi
+
+Buka PowerShell di folder proyek:
+
+```powershell
+cd D:\bot
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+Selalu jalankan bot menggunakan Python dari `.venv`. Python global mungkin tidak memiliki PyNaCl yang diperlukan untuk voice channel.
+
+## Konfigurasi token
+
+Buat atau perbarui file `.env`:
+
+```env
+TOKEN=TOKEN_BOT_DISCORD
+```
+
+Jangan membagikan atau memasukkan `.env` ke Git.
+
+Di Discord Developer Portal, buka pengaturan aplikasi lalu aktifkan:
+
+```text
+Bot > Privileged Gateway Intents > Message Content Intent
+```
+
+Permission bot yang diperlukan:
+
+- View Channels
+- Send Messages
+- Connect
+- Speak
+- Create Expressions
+- Manage Expressions
+
+Permission expression diperlukan untuk Emoji Manager. Permission voice diperlukan untuk Voice TTS.
+
+## Menjalankan bot
+
+```powershell
+cd D:\bot
+.\.venv\Scripts\python.exe main.py
+```
+
+Setelah tersambung, menu berikut akan ditampilkan:
+
+```text
+1. Emoji Manager
+2. Terminal Chat
+3. Voice TTS
+```
+
+Ketik nomor menu untuk memilih fitur. Ketik `exit` untuk kembali atau menutup program.
+
+## Emoji Manager
+
+Atur lokasi GIF dalam `config.py`:
+
+```python
+GIF_FOLDER: Path = Path(r"D:\Discord GIF")
+```
+
+Alur upload:
+
+1. Pilih **Emoji Manager**.
+2. Pilih server.
+3. Pilih **Tambah semua GIF**.
+4. Bot mengunggah seluruh `.gif` yang ukurannya tidak melebihi batas konfigurasi.
+
+Nama emoji dibuat otomatis seperti `emoji0001`, `emoji0002`, dan seterusnya.
+
+Menu **Hapus semua emoji** memerlukan konfirmasi `HAPUS`. Emoji managed milik integrasi lain tidak akan dihapus.
+
+## Terminal Chat dua arah
+
+1. Pilih **Terminal Chat**.
+2. Pilih server.
+3. Pilih text channel.
+4. Pilih **Mulai chat**.
+5. Ketik pesan di terminal untuk mengirimnya ke Discord.
+
+Pesan baru dari channel yang dipilih akan tampil di terminal:
+
+```text
+NamaUser > pesan dari Discord
+You >
+```
+
+Pesan lebih dari 2.000 karakter otomatis dipecah. Ketik `exit` untuk menghentikan sesi chat.
+
+## Voice TTS Queue
+
+1. Pilih **Voice TTS**.
+2. Pilih server.
+3. Pilih voice channel.
+4. Pilih **Join VC**.
+5. Pilih **Terminal TTS Queue**.
+6. Ketik teks yang ingin diucapkan bot.
+
+Contoh:
+
+```text
+TTS > halo semuanya
+QUEUE > ditambahkan, menunggu=1
+
+VOICE [1] > mulai berbicara
+VOICE [1] > selesai
+```
+
+Anda dapat terus menambahkan teks saat bot berbicara. Audio diproses satu per satu. Ketik `exit` untuk menunggu antrean selesai dan kembali.
+
+Bahasa default adalah bahasa Indonesia dengan kode `id`. Gunakan menu **Pilih bahasa** untuk menggantinya, misalnya:
+
+- `id` untuk bahasa Indonesia.
+- `en` untuk bahasa Inggris.
+- `ja` untuk bahasa Jepang.
+
+## Voice Converter
+
+Pipeline audio:
+
+```text
+Teks -> TTS Queue -> gTTS -> Voice Converter opsional -> FFmpeg -> Discord VC
+```
+
+Ketika converter OFF, audio gTTS langsung diputar di Discord. Ketika converter ON, audio diproses oleh converter yang dipilih sebelum diputar.
+
+Converter yang tersedia:
+
+- `passthrough`: menyalin audio tanpa mengubah suara. Gunakan untuk menguji pipeline converter.
+- `rvc`: adapter RVC yang memerlukan backend RVC/w-okada yang kompatibel.
+
+Untuk menguji fondasi converter:
+
+1. Pilih **Pilih converter**.
+2. Pilih `passthrough`.
+3. Aktifkan **Voice Converter ON/OFF** hingga statusnya ON.
+4. Pilih **Test suara** atau gunakan Terminal TTS Queue.
+
+### Menjalankan backend RVC
+
+Adapter `rvc` mendukung w-okada v2.0.78 pada URL berikut:
+
+```text
+http://127.0.0.1:18000
+```
+
+Jalankan backend pada terminal terpisah sebelum bot:
+
+```powershell
+cd D:\bot\dist
+.\main.exe cui --https false --no_cui False
+```
+
+Tunggu sampai log menampilkan `Starting VCServer on port 18000`. Startup pertama akan mengunduh modul inference yang diperlukan.
+
+Adapter memakai endpoint `/api/voice-changer/convert_chunk`, menormalisasi audio menjadi mono float32 48 kHz, lalu mengubah hasil menjadi WAV untuk Discord. Endpoint `convert_file` tidak digunakan karena rusak pada paket v2.0.78 ini.
+
+Setelah backend aktif:
+
+1. Pilih converter `rvc`.
+2. Pilih **Pilih model** untuk melihat slot RVC dari backend w-okada.
+3. Aktifkan Voice Converter.
+4. Gunakan **Test suara** atau Terminal TTS Queue.
+
+Jika model belum dipilih dari bot, adapter menggunakan slot yang sedang aktif pada UI w-okada.
+
+## Model Manager RVC
+
+Struktur penyimpanan model:
+
+```text
+models/
+└── rvc/
+    └── nama_model/
+        ├── model.pth
+        └── model.index
+```
+
+File `.index` bersifat opsional. Setiap folder model harus memiliki tepat satu file `.pth` dan maksimal satu file `.index`.
+
+### Import model ZIP
+
+1. Buka **Voice TTS > Model Manager**.
+2. Pilih **Import model**.
+3. Masukkan path lengkap file `.zip`.
+4. Masukkan nama model.
+
+Contoh path:
+
+```text
+C:\Users\nama\Downloads\miku.zip
+```
+
+ZIP hanya akan membaca file `.pth` dan `.index`. Path traversal di dalam ZIP ditolak dan isi model tidak pernah dieksekusi sebagai Python.
+
+### Import file PTH
+
+Masukkan path file `.pth` secara langsung. Jika folder sumber memiliki tepat satu file `.index`, file tersebut ikut disalin.
+
+Model dapat dipilih melalui **Pilih model**. Penghapusan model memerlukan konfirmasi berikut:
+
+```text
+HAPUS nama_model
+```
+
+File model di dalam `models/rvc` diabaikan Git agar model berukuran besar tidak ikut terunggah.
+
+## Pengaturan konversi
+
+- Pitch: `-24` sampai `+24` semitone.
+- Index ratio: `0.0` sampai `1.0`.
+- Protect: `0.0` sampai `1.0`.
+
+Pitch adalah bagian dari Voice Converter, bukan fitur gTTS. Pengaturan ini baru diterapkan oleh backend converter yang mendukungnya.
+
+## Pemecahan masalah
+
+### PyNaCl library needed
+
+Bot dijalankan memakai Python global. Gunakan:
+
+```powershell
+.\.venv\Scripts\python.exe main.py
+```
+
+### FFmpeg tidak ditemukan
+
+Pasang FFmpeg dan pastikan perintah berikut bekerja:
+
+```powershell
+ffmpeg -version
+```
+
+### Bot tidak dapat masuk voice channel
+
+Pastikan bot memiliki permission **View Channel**, **Connect**, dan **Speak** pada channel tersebut.
+
+### Pesan Discord tidak muncul di terminal
+
+Aktifkan **Message Content Intent** di Discord Developer Portal, lalu restart bot.
+
+### Backend RVC tidak dapat dihubungi
+
+Pastikan w-okada v2.0.78 berjalan pada `http://127.0.0.1:18000`. Matikan Voice Converter atau gunakan `passthrough` jika backend tidak sedang digunakan.
