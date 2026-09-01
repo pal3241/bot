@@ -1,11 +1,25 @@
+from pathlib import Path
+
 import discord
 
+from config import RVC_MODELS_FOLDER
 from core.context import AppContext
 from core.io import ainput, pilih_server
 from core.registry import feature
 from voice.manager import VoiceManager
+from voice.models import RVCModel, delete_model, get_model, import_model, list_models
 from voice.queue import TTSQueue
 from voice.registry import PROVIDERS
+from voice.converters.registry import CONVERTERS
+from voice.converters.settings import (
+    VoiceConverterSettings,
+    set_converter,
+    set_enabled,
+    set_index_ratio,
+    set_model,
+    set_pitch,
+    set_protect,
+)
 
 
 async def pilih_voice_channel(ctx: AppContext) -> discord.VoiceChannel | None:
@@ -124,6 +138,161 @@ async def pilih_bahasa(manager: VoiceManager) -> None:
     print(f"Bahasa aktif: {manager.language}")
 
 
+def tampilkan_model(models: list[RVCModel]) -> None:
+    if not models:
+        print("Belum ada model RVC.")
+        return
+    for nomor, model in enumerate(models, start=1):
+        index_name: str = model.index_file.name if model.index_file else "-"
+        print(
+            f"{nomor}. {model.name} | weight={model.weight_file.name} | index={index_name}"
+        )
+
+
+async def pilih_converter(manager: VoiceManager) -> None:
+    names: list[str] = list(CONVERTERS)
+    print("\n" + "=" * 40)
+    print("VOICE CONVERTERS")
+    print("=" * 40)
+    for nomor, name in enumerate(names, start=1):
+        active: str = " [ACTIVE]" if name == manager.converter_settings.converter else ""
+        print(f"{nomor}. {name}{active}")
+    print("\nKetik exit untuk batal.")
+    while True:
+        pilihan: str = (await ainput("\nPilih converter: ")).strip()
+        if pilihan.lower() == "exit":
+            return
+        try:
+            index: int = int(pilihan) - 1
+        except ValueError:
+            print("Pilihan tidak valid.")
+            continue
+        if 0 <= index < len(names):
+            settings: VoiceConverterSettings = set_converter(
+                manager.converter_settings,
+                names[index],
+            )
+            manager.set_converter_settings(settings)
+            print(f"Voice converter aktif: {settings.converter}")
+            return
+        print("Pilihan tidak valid.")
+
+
+async def pilih_model(manager: VoiceManager) -> None:
+    models: list[RVCModel] = list_models(RVC_MODELS_FOLDER)
+    print("\n" + "=" * 40)
+    print("MODEL RVC")
+    print("=" * 40)
+    tampilkan_model(models)
+    if not models:
+        return
+    print("\nKetik exit untuk batal.")
+    while True:
+        pilihan: str = (await ainput("\nPilih model: ")).strip()
+        if pilihan.lower() == "exit":
+            return
+        try:
+            index: int = int(pilihan) - 1
+        except ValueError:
+            print("Pilihan tidak valid.")
+            continue
+        if 0 <= index < len(models):
+            settings: VoiceConverterSettings = set_model(
+                manager.converter_settings,
+                models[index].name,
+            )
+            manager.set_converter_settings(settings)
+            print(f"Model aktif: {models[index].name}")
+            return
+        print("Pilihan tidak valid.")
+
+
+async def model_manager(manager: VoiceManager) -> None:
+    while True:
+        print("\n" + "=" * 40)
+        print("MODEL MANAGER")
+        print("=" * 40)
+        print("1. Import model")
+        print("2. List model")
+        print("3. Pilih model")
+        print("4. Hapus model")
+        print("5. Model info")
+        print("\nexit = kembali")
+        pilihan: str = (await ainput("\nPilih: ")).strip().lower()
+        if pilihan == "exit":
+            return
+        if pilihan == "1":
+            source: Path = Path((await ainput("Path file .zip/.pth: ")).strip().strip('"'))
+            name: str = (await ainput("Nama model: ")).strip()
+            model: RVCModel = import_model(source, RVC_MODELS_FOLDER, name)
+            print(f"Model berhasil diimpor: {model.name}")
+        elif pilihan == "2":
+            tampilkan_model(list_models(RVC_MODELS_FOLDER))
+        elif pilihan == "3":
+            await pilih_model(manager)
+        elif pilihan == "4":
+            name = (await ainput("Nama model yang akan dihapus: ")).strip()
+            konfirmasi: str = await ainput(f'Ketik "HAPUS {name}" untuk konfirmasi: ')
+            if konfirmasi != f"HAPUS {name}":
+                print("Dibatalkan.")
+                continue
+            delete_model(RVC_MODELS_FOLDER, name)
+            if manager.converter_settings.model == name:
+                manager.set_converter_settings(set_model(manager.converter_settings, None))
+            print(f"Model dihapus: {name}")
+        elif pilihan == "5":
+            name = (await ainput("Nama model: ")).strip()
+            model = get_model(RVC_MODELS_FOLDER, name)
+            print(f"Nama   : {model.name}")
+            print(f"Folder : {model.folder.resolve()}")
+            print(f"Weight : {model.weight_file.name} ({model.weight_file.stat().st_size} byte)")
+            print(f"Index  : {model.index_file.name if model.index_file else '-'}")
+        else:
+            print("Pilihan tidak tersedia.")
+
+
+async def atur_pitch(manager: VoiceManager) -> None:
+    raw_value: str = (await ainput("Pitch (-24 sampai +24): ")).strip()
+    settings: VoiceConverterSettings = set_pitch(manager.converter_settings, int(raw_value))
+    manager.set_converter_settings(settings)
+    print(f"Pitch aktif: {settings.pitch:+d}")
+
+
+async def atur_index_ratio(manager: VoiceManager) -> None:
+    raw_value: str = (await ainput("Index ratio (0.0 sampai 1.0): ")).strip()
+    settings: VoiceConverterSettings = set_index_ratio(
+        manager.converter_settings,
+        float(raw_value),
+    )
+    manager.set_converter_settings(settings)
+    print(f"Index ratio aktif: {settings.index_ratio:.2f}")
+
+
+async def atur_protect(manager: VoiceManager) -> None:
+    raw_value: str = (await ainput("Protect (0.0 sampai 1.0): ")).strip()
+    settings: VoiceConverterSettings = set_protect(
+        manager.converter_settings,
+        float(raw_value),
+    )
+    manager.set_converter_settings(settings)
+    print(f"Protect aktif: {settings.protect:.2f}")
+
+
+async def test_suara(ctx: AppContext, manager: VoiceManager) -> None:
+    voice_client: discord.VoiceClient | None = await join_voice_channel(ctx)
+    if voice_client is None:
+        return
+    text: str = (await ainput("Teks test: ")).strip()
+    if not text:
+        raise ValueError("Teks test tidak boleh kosong.")
+    print("Generating TTS...")
+    if manager.converter_settings.enabled:
+        print("Converting voice...")
+    print("Playing...")
+    await manager.speak(voice_client, text)
+    print("Test suara selesai.")
+
+
 async def disconnect_voice(ctx: AppContext) -> None:
     if ctx.guild is None or ctx.guild.voice_client is None:
         print("Bot tidak sedang terhubung ke voice channel.")
@@ -148,13 +317,29 @@ async def voice_feature(ctx: AppContext) -> None:
         print(f"Terhubung   : {connected_channel}")
         print(f"TTS Engine  : {manager.provider_name}")
         print(f"Language    : {manager.language}")
+        settings: VoiceConverterSettings = manager.converter_settings
+        converter_status: str = "ON" if settings.enabled else "OFF"
+        print(f"Converter   : {converter_status} ({settings.converter})")
+        print(f"Model       : {settings.model or '-'}")
+        print(
+            f"Pitch       : {settings.pitch:+d} | Index: {settings.index_ratio:.2f} | "
+            f"Protect: {settings.protect:.2f}"
+        )
         print("\n1. Pilih server")
         print("2. Pilih voice channel")
         print("3. Join VC")
         print("4. Terminal TTS Queue")
         print("5. Pilih TTS Engine")
         print("6. Pilih bahasa")
-        print("7. Disconnect")
+        print("7. Voice Converter ON/OFF")
+        print("8. Pilih converter")
+        print("9. Model Manager")
+        print("10. Pilih model")
+        print("11. Atur pitch")
+        print("12. Atur index ratio")
+        print("13. Atur protect")
+        print("14. Test suara")
+        print("15. Disconnect")
         print("\nexit = kembali")
 
         pilihan: str = (await ainput("\nPilih: ")).strip().lower()
@@ -171,6 +356,23 @@ async def voice_feature(ctx: AppContext) -> None:
         elif pilihan == "6":
             await pilih_bahasa(manager)
         elif pilihan == "7":
+            manager.set_converter_settings(set_enabled(settings, not settings.enabled))
+            print(f"Voice Converter: {'ON' if not settings.enabled else 'OFF'}")
+        elif pilihan == "8":
+            await pilih_converter(manager)
+        elif pilihan == "9":
+            await model_manager(manager)
+        elif pilihan == "10":
+            await pilih_model(manager)
+        elif pilihan == "11":
+            await atur_pitch(manager)
+        elif pilihan == "12":
+            await atur_index_ratio(manager)
+        elif pilihan == "13":
+            await atur_protect(manager)
+        elif pilihan == "14":
+            await test_suara(ctx, manager)
+        elif pilihan == "15":
             await disconnect_voice(ctx)
         elif pilihan == "exit":
             return

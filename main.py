@@ -42,7 +42,10 @@ async def main_menu(ctx: AppContext) -> None:
 
         if 0 <= index < len(features):
             _, function = features[index]
-            await function(ctx)
+            try:
+                await function(ctx)
+            except (OSError, ValueError, RuntimeError, discord.DiscordException) as error:
+                print(f"\nFITUR GAGAL: {type(error).__name__}: {error}")
         else:
             print("Pilihan tidak valid.")
 

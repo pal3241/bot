@@ -3,20 +3,49 @@ from pathlib import Path
 
 import discord
 
-from config import TTS_LANGUAGE, TTS_PROVIDER
+from config import (
+    TTS_LANGUAGE,
+    TTS_PROVIDER,
+    VOICE_CONVERTER,
+    VOICE_CONVERTER_ENABLED,
+    VOICE_CONVERTER_INDEX_RATIO,
+    VOICE_CONVERTER_PITCH,
+    VOICE_CONVERTER_PROTECT,
+)
+from voice.converters.base import VoiceConverter
+from voice.converters.registry import create_converter
+from voice.converters.settings import VoiceConverterSettings
 from voice.providers.base import TTSProvider
 from voice.registry import create_provider
 
 
 class VoiceManager:
-    def __init__(self, provider_name: str, language: str) -> None:
+    def __init__(
+        self,
+        provider_name: str,
+        language: str,
+        converter_settings: VoiceConverterSettings,
+    ) -> None:
         self.provider_name: str = provider_name
         self.provider: TTSProvider = create_provider(provider_name)
         self.language: str = language
+        self.converter_settings: VoiceConverterSettings = converter_settings
+        self.converter: VoiceConverter = create_converter(
+            converter_settings.converter,
+            converter_settings,
+        )
 
     @classmethod
     def from_config(cls) -> "VoiceManager":
-        return cls(TTS_PROVIDER, TTS_LANGUAGE)
+        settings: VoiceConverterSettings = VoiceConverterSettings(
+            enabled=VOICE_CONVERTER_ENABLED,
+            converter=VOICE_CONVERTER,
+            model=None,
+            pitch=VOICE_CONVERTER_PITCH,
+            index_ratio=VOICE_CONVERTER_INDEX_RATIO,
+            protect=VOICE_CONVERTER_PROTECT,
+        )
+        return cls(TTS_PROVIDER, TTS_LANGUAGE, settings)
 
     def set_provider(self, provider_name: str) -> None:
         provider: TTSProvider = create_provider(provider_name)
@@ -29,6 +58,11 @@ class VoiceManager:
             raise ValueError("Kode bahasa TTS tidak boleh kosong.")
         self.language = normalized_language
 
+    def set_converter_settings(self, settings: VoiceConverterSettings) -> None:
+        converter: VoiceConverter = create_converter(settings.converter, settings)
+        self.converter_settings = settings
+        self.converter = converter
+
     async def speak(self, voice_client: discord.VoiceClient, text: str) -> None:
         if not voice_client.is_connected():
             raise RuntimeError("Bot belum terhubung ke voice channel.")
@@ -36,11 +70,18 @@ class VoiceManager:
             raise ValueError("Teks yang akan diucapkan tidak boleh kosong.")
 
         audio_file: Path = await self.provider.synthesize(text, self.language)
+        playback_file: Path = audio_file
         try:
+            if self.converter_settings.enabled:
+                playback_file = await self.converter.convert(audio_file)
             while voice_client.is_playing():
                 await asyncio.sleep(0.1)
-            await self._play(voice_client, audio_file)
+            if not voice_client.is_connected():
+                raise RuntimeError("Discord VC terputus sebelum audio diputar.")
+            await self._play(voice_client, playback_file)
         finally:
+            if playback_file != audio_file and playback_file.exists():
+                playback_file.unlink()
             if audio_file.exists():
                 audio_file.unlink()
 
@@ -57,4 +98,3 @@ class VoiceManager:
         source: discord.FFmpegPCMAudio = discord.FFmpegPCMAudio(str(audio_file))
         voice_client.play(source, after=after)
         await finished
-
