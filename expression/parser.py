@@ -1,16 +1,8 @@
-import json
 import math
 
+from core.structured_response import parse_json_object
 from expression.enums import BonusMedia, Emotion, ExpressionIntent
 from expression.models import DEFAULT_EXPRESSION, ExpressionRequest
-
-
-def _clean_json(raw: str) -> str:
-    cleaned: str = raw.strip()
-    if cleaned.startswith("```") and cleaned.endswith("```"):
-        lines: list[str] = cleaned.splitlines()
-        return "\n".join(lines[1:-1]).strip()
-    return cleaned
 
 
 def _enum_or_default(
@@ -42,14 +34,8 @@ def _intensity(value: object) -> float:
 
 
 def parse_expression_response(raw: str) -> ExpressionRequest:
-    cleaned: str = _clean_json(raw)
-    if not cleaned:
-        return DEFAULT_EXPRESSION
-    try:
-        parsed: object = json.loads(cleaned)
-    except json.JSONDecodeError:
-        return DEFAULT_EXPRESSION
-    if not isinstance(parsed, dict):
+    parsed: dict[str, object] | None = parse_json_object(raw)
+    if parsed is None:
         return DEFAULT_EXPRESSION
     expression: object = parsed.get("expression")
     if not isinstance(expression, dict):

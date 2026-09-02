@@ -36,6 +36,17 @@ class ExpressionParserTests(unittest.TestCase):
         for raw in ("plain text", "{truncated", "", "   ", '{"expression":null}'):
             self.assertEqual(parse_expression_response(raw), DEFAULT_EXPRESSION)
 
+    def test_json_with_preamble_and_suffix_keeps_expression(self) -> None:
+        raw: str = (
+            'Berikut hasilnya:\n{"text":"oke","memory":null,"expression":'
+            '{"emotion":"happy","intent":"reaction","intensity":0.8,'
+            '"bonus_media":"none","allow_bonus":false}}\nSelesai.'
+        )
+        parsed = parse_expression_response(raw)
+        self.assertEqual(parsed.emotion, Emotion.HAPPY)
+        self.assertEqual(parsed.intent, ExpressionIntent.REACTION)
+        self.assertEqual(parsed.intensity, 0.8)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,7 @@ import json
 import re
 from dataclasses import dataclass
 
+from core.structured_response import parse_json_object, strip_json_fence
 from memory.models import MEMORY_CATEGORIES, MemoryActionType, MemoryCandidate
 
 
@@ -9,14 +10,6 @@ from memory.models import MEMORY_CATEGORIES, MemoryActionType, MemoryCandidate
 class ParsedMemoryResponse:
     text: str
     candidate: MemoryCandidate | None
-
-
-def _plain_text(raw: str) -> str:
-    cleaned: str = raw.strip()
-    if cleaned.startswith("```") and cleaned.endswith("```"):
-        lines: list[str] = cleaned.splitlines()
-        cleaned = "\n".join(lines[1:-1]).strip()
-    return cleaned
 
 
 def _recover_text(raw: str) -> str | None:
@@ -78,15 +71,11 @@ def parse_candidate(value: object) -> MemoryCandidate | None:
 
 
 def parse_memory_response(raw: str) -> ParsedMemoryResponse:
-    cleaned: str = _plain_text(raw)
-    try:
-        parsed: object = json.loads(cleaned)
-    except json.JSONDecodeError as error:
+    cleaned: str = strip_json_fence(raw)
+    parsed: dict[str, object] | None = parse_json_object(cleaned)
+    if parsed is None:
         recovered: str | None = _recover_text(cleaned)
-        if recovered is not None:
-            print(f"[SENA MEMORY] structured response invalid detail={error.msg}")
-            return ParsedMemoryResponse(recovered, None)
-        return ParsedMemoryResponse(cleaned, None)
+        return ParsedMemoryResponse(recovered or cleaned, None)
     if not isinstance(parsed, dict):
         return ParsedMemoryResponse(cleaned, None)
     text_value: object = parsed.get("text")

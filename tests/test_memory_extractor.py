@@ -30,6 +30,14 @@ class MemoryExtractorTests(unittest.TestCase):
         self.assertEqual(store.action, MemoryActionType.STORE)
         self.assertEqual(delete.action, MemoryActionType.DELETE)
 
+    def test_json_with_preamble_and_truncated_text_are_recovered(self) -> None:
+        wrapped = parse_memory_response(
+            'Jawaban terstruktur:\n{"text":"dua","memory":null,"expression":null}\nSelesai.'
+        )
+        truncated = parse_memory_response('{"text":"jawaban tetap utuh","memory":')
+        self.assertEqual(wrapped.text, "dua")
+        self.assertEqual(truncated.text, "jawaban tetap utuh")
+
 
 if __name__ == "__main__":
     unittest.main()
