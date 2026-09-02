@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from expression.models import ExpressionRequest
 from memory.models import MemoryCandidate
 
 
@@ -7,3 +8,4 @@ from memory.models import MemoryCandidate
 class AssistantResponse:
     text: str
     memory_action: MemoryCandidate | None
+    expression: ExpressionRequest | None

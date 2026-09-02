@@ -1,5 +1,6 @@
 import asyncio
 import os
+from pathlib import Path
 
 import discord
 from dotenv import load_dotenv
@@ -14,6 +15,7 @@ from core.context import AppContext
 from core.io import ainput
 from core.registry import FEATURES, Feature
 from features.chat import tampilkan_pesan_discord
+from expression.service import ExpressionService
 
 
 async def main_menu(ctx: AppContext) -> None:
@@ -59,8 +61,15 @@ async def run(token: str) -> None:
     client: discord.Client = discord.Client(intents=intents)
     assistant = build_assistant_manager()
     await assistant.initialize()
+    expression_service: ExpressionService = ExpressionService(
+        client,
+        Path("config/expressions.json"),
+        Path("assets/expressions/gifs"),
+    )
     ctx: AppContext = AppContext(client=client, assistant=assistant)
-    message_router: DiscordMessageRouter = DiscordMessageRouter(client, assistant)
+    message_router: DiscordMessageRouter = DiscordMessageRouter(
+        client, assistant, expression_service.sender
+    )
 
     async def on_message(message: discord.Message) -> None:
         await tampilkan_pesan_discord(message, ctx)
@@ -74,6 +83,7 @@ async def run(token: str) -> None:
         await client.wait_until_ready()
         if client.user is None:
             raise RuntimeError("Discord client siap tetapi identitas bot tidak tersedia.")
+        expression_service.refresh_runtime()
         print("\n" + "=" * 60)
         print("BOT ONLINE")
         print("=" * 60)

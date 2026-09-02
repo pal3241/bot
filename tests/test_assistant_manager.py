@@ -27,6 +27,22 @@ class RecordingProvider(LLMProvider):
         return
 
 
+class ExpressionProvider(LLMProvider):
+    def __init__(self) -> None:
+        self.calls: list[list[ChatMessage]] = []
+
+    async def chat(self, messages: list[ChatMessage], model: str) -> str:
+        self.calls.append(list(messages))
+        return (
+            '{"text":"bagus","memory":null,"expression":{'
+            '"emotion":"proud","intent":"praise","intensity":0.8,'
+            '"bonus_media":"auto","allow_bonus":true}}'
+        )
+
+    async def close(self) -> None:
+        return
+
+
 def settings() -> AISettings:
     return AISettings(
         provider_name="openrouter",
@@ -43,6 +59,36 @@ def settings() -> AISettings:
 
 
 class AssistantManagerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_structured_expression_uses_same_llm_call_without_asset_ids(self) -> None:
+        provider = ExpressionProvider()
+        with tempfile.TemporaryDirectory() as folder:
+            manager = AssistantManager(
+                personality=PersonalityManager(Path(folder) / "personality.json"),
+                sessions=SessionManager(120.0, 24),
+                llm=LLMManager(provider, "test", "model"),
+                settings=settings(),
+                owner_resolver=OwnerResolver(None),
+                memory=MemoryManager(
+                    MemoryStore(Path(folder) / "memory.db"),
+                    MemoryPolicy(0.55, 0.70, 500),
+                    5,
+                    2500,
+                ),
+            )
+            response = await manager.chat(
+                100, "User", 10, "akhirnya berhasil", 1, "discord_text"
+            )
+            self.assertEqual(response.text, "bagus")
+            self.assertIsNotNone(response.expression)
+            if response.expression is None:
+                self.fail("Expression structured response tidak diparse.")
+            self.assertEqual(response.expression.emotion.value, "proud")
+            self.assertEqual(len(provider.calls), 1)
+            prompt: str = "\n".join(item.content for item in provider.calls[0])
+            self.assertNotIn("discord_id", prompt)
+            self.assertNotIn("local_path", prompt)
+            await manager.close()
+
     async def test_context_only_does_not_call_llm_and_is_visible_to_next_user(self) -> None:
         provider = RecordingProvider()
         with tempfile.TemporaryDirectory() as folder:

@@ -13,37 +13,17 @@ from assistant.discord.message_classifier import (
 from assistant.llm.base import LLMProviderError
 from assistant.manager import AssistantManager
 from assistant.session import SessionState
+from expression.models import (
+    DEFAULT_EXPRESSION,
+    ExpressionConversationKey,
+    ExpressionRequest,
+)
+from expression.sender import DiscordExpressionSender
 
 
 def remove_bot_mention(content: str, bot_id: int) -> str:
     pattern: str = rf"<@!?{bot_id}>"
     return re.sub(pattern, "", content).strip()
-
-
-def split_message(text: str, limit: int) -> list[str]:
-    if limit <= 0:
-        raise ValueError("Batas pecahan pesan harus lebih besar dari nol.")
-    paragraphs: list[str] = text.split("\n")
-    chunks: list[str] = []
-    current: str = ""
-    for paragraph in paragraphs:
-        candidate: str = paragraph if not current else f"{current}\n{paragraph}"
-        if len(candidate) <= limit:
-            current = candidate
-            continue
-        if current:
-            chunks.append(current)
-        remaining: str = paragraph
-        while len(remaining) > limit:
-            cut: int = remaining.rfind(" ", 0, limit + 1)
-            if cut <= 0:
-                cut = limit
-            chunks.append(remaining[:cut].rstrip())
-            remaining = remaining[cut:].lstrip()
-        current = remaining
-    if current or not chunks:
-        chunks.append(current)
-    return chunks
 
 
 async def resolve_reply_author_id(message: discord.Message) -> tuple[bool, int | None]:
@@ -63,24 +43,30 @@ async def resolve_reply_author_id(message: discord.Message) -> tuple[bool, int |
 
 
 class DiscordMessageRouter:
-    def __init__(self, client: discord.Client, assistant: AssistantManager) -> None:
+    def __init__(
+        self,
+        client: discord.Client,
+        assistant: AssistantManager,
+        expression_sender: DiscordExpressionSender,
+    ) -> None:
         self._client: discord.Client = client
         self._assistant: AssistantManager = assistant
+        self._expression_sender: DiscordExpressionSender = expression_sender
 
-    async def _reply(self, message: discord.Message, text: str) -> None:
-        chunks: list[str] = split_message(text, 2000)
-        try:
-            await message.reply(chunks[0], mention_author=False)
-            for chunk in chunks[1:]:
-                await message.channel.send(chunk)
-        except discord.Forbidden as error:
-            raise PermissionError(
-                f"Sena tidak memiliki izin mengirim balasan ke channel {message.channel.id}."
-            ) from error
-        except discord.HTTPException as error:
-            raise RuntimeError(
-                f"Discord API gagal mengirim balasan Sena: status={error.status}, detail={error.text}"
-            ) from error
+    async def _reply(
+        self,
+        message: discord.Message,
+        text: str,
+        expression: ExpressionRequest | None,
+        is_owner: bool,
+        key: ConversationKey,
+    ) -> None:
+        expression_key = ExpressionConversationKey(
+            key.source, key.guild_id, key.channel_id, key.participant_id
+        )
+        await self._expression_sender.send(
+            message, text, expression, is_owner, expression_key
+        )
 
     async def handle(self, message: discord.Message) -> None:
         bot_user: discord.ClientUser | None = self._client.user
@@ -95,6 +81,9 @@ class DiscordMessageRouter:
             channel_id=message.channel.id,
             user_id=message.author.id,
         )
+        is_owner: bool = self._assistant.owner_resolver.resolve(
+            message.author.id, message.author.display_name
+        ).is_owner
         session_state: SessionState = self._assistant.sessions.state(key)
         mentioned: bool = bot_user in message.mentions
         if mentioned:
@@ -129,11 +118,15 @@ class DiscordMessageRouter:
             return
         if decision.command is SessionCommand.SILENCE:
             self._assistant.sessions.silence(key)
-            await self._reply(message, "oke, gue diem.")
+            await self._reply(
+                message, "oke, gue diem.", DEFAULT_EXPRESSION, is_owner, key
+            )
             return
         if decision.command is SessionCommand.WAKE:
             self._assistant.sessions.activate(key)
-            await self._reply(message, "iya, gue bangun.")
+            await self._reply(
+                message, "iya, gue bangun.", DEFAULT_EXPRESSION, is_owner, key
+            )
             return
         if session_state is SessionState.SILENCED and decision.reason == "reply_to_bot":
             return
@@ -149,7 +142,15 @@ class DiscordMessageRouter:
                     guild_id=guild_id,
                     source="discord_text",
                 )
-            await self._reply(message, response.text)
+            await self._reply(
+                message, response.text, response.expression, is_owner, key
+            )
         except LLMProviderError as error:
             print(f"[SENA] provider error type={type(error).__name__} detail={error}")
-            await self._reply(message, "AI provider lagi error. coba sebentar lagi.")
+            await self._reply(
+                message,
+                "AI provider lagi error. coba sebentar lagi.",
+                DEFAULT_EXPRESSION,
+                is_owner,
+                key,
+            )

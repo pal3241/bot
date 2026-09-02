@@ -19,6 +19,7 @@ from assistant.personality import PersonalityManager
 from assistant.response import AssistantResponse
 from assistant.settings import AISettings, load_settings
 from assistant.session import ChatSession, SessionManager
+from expression.parser import expression_response_instruction, parse_expression_response
 from memory.context import build_identity_context
 from memory.extractor import (
     ParsedMemoryResponse,
@@ -120,6 +121,9 @@ class AssistantManager:
             )
             if memory_enabled:
                 system_prompt += "\n" + structured_response_instruction()
+            else:
+                system_prompt += "\nSet the structured response memory field to null."
+            system_prompt += "\n" + expression_response_instruction()
             history_text: str = format_history(session.history)
             current_text: str = format_current_speaker(user_id, clean_name, clean_text)
             messages: list[ChatMessage] = [
@@ -130,14 +134,11 @@ class AssistantManager:
             messages.append(ChatMessage(role="user", content=current_text))
             async with self._llm_lock:
                 raw_response: str = await self._llm.chat(messages)
-            parsed_response: ParsedMemoryResponse = (
-                parse_memory_response(raw_response)
-                if memory_enabled
-                else ParsedMemoryResponse(raw_response.strip(), None)
-            )
+            parsed_response: ParsedMemoryResponse = parse_memory_response(raw_response)
             response_text: str = parsed_response.text
             candidate: MemoryCandidate | None = (
-                explicit_candidate or parsed_response.candidate
+                explicit_candidate
+                or (parsed_response.candidate if memory_enabled else None)
             )
             if candidate is not None:
                 try:
@@ -168,7 +169,11 @@ class AssistantManager:
                 ],
             )
             self.sessions.touch(session)
-            return AssistantResponse(text=response_text, memory_action=candidate)
+            return AssistantResponse(
+                text=response_text,
+                memory_action=candidate,
+                expression=parse_expression_response(raw_response),
+            )
 
     async def observe_message(
         self,

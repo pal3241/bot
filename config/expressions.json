@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "policy": {
+    "emoji_required": true,
+    "unicode_fallback_enabled": true,
+    "top_k": 3,
+    "min_candidate_score": 0.42,
+    "top_k_score_window": 0.12,
+    "sticker_min_intensity": 0.55,
+    "gif_min_intensity": 0.75,
+    "sticker_channel_cooldown_seconds": 15,
+    "gif_channel_cooldown_seconds": 30,
+    "same_sticker_cooldown_seconds": 120,
+    "same_gif_cooldown_seconds": 180,
+    "recent_emoji_size": 8,
+    "recent_bonus_size": 5
+  },
+  "emojis": [],
+  "stickers": [],
+  "gifs": []
+}

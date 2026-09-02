@@ -162,6 +162,34 @@ Perintah eksplisit yang didukung:
 
 Hanya pesan yang benar-benar memicu respons yang melakukan retrieval memory. Pesan `IGNORE` dan `CONTEXT_ONLY` tidak membaca atau menulis database. Retrieval dibatasi maksimal lima memory dan 2.500 karakter.
 
+### Expression System
+
+Setiap balasan Discord Sena mendapat tepat satu primary emoji. Jika custom emoji katalog tidak tersedia, bot otomatis memakai Unicode yang sesuai dengan emotion hasil AI. Sticker dan GIF hanya bonus, mempunyai intensity threshold serta cooldown, dan kegagalannya tidak membatalkan text+emoji yang sudah terkirim.
+
+Katalog berada di `config/expressions.json`. Model AI hanya memilih `emotion`, `intent`, `intensity`, dan preferensi bonus; Discord ID dan path media hanya boleh berasal dari katalog lokal. Tambahkan GIF ke `assets/expressions/gifs/`, lalu gunakan path relatif terhadap folder tersebut pada field `local_path`.
+
+Contoh custom emoji:
+
+```json
+{
+  "key": "senna_smug_soft_01",
+  "name": "senna_smug",
+  "discord_id": 123456789012345678,
+  "guild_id": 111111111111111111,
+  "animated": false,
+  "emotion": "smug",
+  "intents": ["playful_teasing", "reaction"],
+  "intensity_min": 0.2,
+  "intensity_max": 0.65,
+  "tags": ["smirk", "teasing"],
+  "enabled": true,
+  "owner_affinity": 0.1,
+  "priority": 1.0
+}
+```
+
+Masukkan object tersebut ke array `emojis`. Catalog rusak saat startup menghasilkan Unicode-only mode; reload yang rusak mempertahankan catalog lama.
+
 Personality Phase 2 aktif berada di:
 
 ```text

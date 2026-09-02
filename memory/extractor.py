@@ -148,8 +148,7 @@ def parse_explicit_memory_command(text: str) -> MemoryCandidate | None:
 def structured_response_instruction() -> str:
     categories: str = ", ".join(sorted(MEMORY_CATEGORIES))
     return (
-        "Return exactly one JSON object with keys 'text' and 'memory'. "
-        "'text' is the natural reply. 'memory' is null unless the owner stated "
+        "In the structured JSON response, 'memory' is null unless the owner stated "
         "durable information worth remembering. When used, memory must contain "
         "action, category, content, importance, confidence, target_memory_id. "
         f"Allowed categories: {categories}. Never store transient chatter."
