@@ -19,6 +19,7 @@ RVC_CONFIG_TIMEOUT_SECONDS: float = 10.0
 RVC_CHUNK_SECONDS: float = 0.5
 W_OKADA_FOLDER: Path = Path("dist")
 VOICE_SETTINGS_FILE: Path = Path("data/voice_settings.json")
+AI_SETTINGS_FILE: Path = Path("data/ai_settings.json")
 TTS_READY_QUEUE_SIZE: int = 2
 LLM_PROVIDER: str = "openrouter"
 OPENROUTER_MODEL: str = "openai/gpt-4o-mini"

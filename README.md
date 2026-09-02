@@ -90,9 +90,12 @@ Setelah tersambung, menu berikut akan ditampilkan:
 1. Emoji Manager
 2. Terminal Chat
 3. Voice TTS
+4. AI Settings
 ```
 
 Ketik nomor menu untuk memilih fitur. Ketik `exit` untuk kembali atau menutup program.
+
+Menu **AI Settings** berada pada nomor 4. Pengaturan provider, model, token, timeout, retry, session, history, bahasa, dan NVIDIA NIM URL dapat diubah saat bot berjalan. Nilainya disimpan otomatis ke `data/ai_settings.json`; API key tetap hanya dibaca dari `.env` dan tidak pernah disimpan di file pengaturan.
 
 ## Emoji Manager
 

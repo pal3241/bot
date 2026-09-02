@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 import features.emoji
 import features.chat
 import features.voice
+import features.ai
 from assistant import build_assistant_manager
 from assistant.discord import DiscordMessageRouter
 from core.context import AppContext
@@ -56,8 +57,8 @@ async def run(token: str) -> None:
     intents: discord.Intents = discord.Intents.default()
     intents.message_content = True
     client: discord.Client = discord.Client(intents=intents)
-    ctx: AppContext = AppContext(client=client)
     assistant = build_assistant_manager()
+    ctx: AppContext = AppContext(client=client, assistant=assistant)
     message_router: DiscordMessageRouter = DiscordMessageRouter(client, assistant)
 
     async def on_message(message: discord.Message) -> None:
