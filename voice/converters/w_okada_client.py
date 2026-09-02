@@ -1,4 +1,5 @@
 import asyncio
+import shutil
 import time
 import uuid
 from dataclasses import dataclass
@@ -6,8 +7,14 @@ from pathlib import Path
 
 import aiohttp
 
+from voice.models import RVCModel
+
 
 class WOkadaAPIError(RuntimeError):
+    pass
+
+
+class WOkadaRequestRejectedError(WOkadaAPIError):
     pass
 
 
@@ -55,6 +62,58 @@ class WOkadaClient:
                 )
             models.append(WOkadaModel(slot_index, name, model_file))
         return models
+
+    async def import_model(self, model: RVCModel, backend_folder: Path) -> WOkadaModel:
+        existing: list[WOkadaModel] = await self.list_rvc_models()
+        matches: list[WOkadaModel] = [item for item in existing if item.name == model.name]
+        if matches:
+            return matches[0]
+
+        upload_folder: Path = backend_folder / "upload_dir"
+        if not upload_folder.is_dir():
+            raise FileNotFoundError(
+                f"Folder upload w-okada tidak ditemukan: {upload_folder.resolve()}"
+            )
+        uploaded_weight: Path = upload_folder / model.weight_file.name
+        uploaded_index: Path | None = None
+        if model.index_file is not None:
+            uploaded_index = upload_folder / model.index_file.name
+        if uploaded_weight.exists() or (
+            uploaded_index is not None and uploaded_index.exists()
+        ):
+            raise FileExistsError(
+                "Folder upload w-okada sudah memiliki file dengan nama model yang sama."
+            )
+
+        await asyncio.to_thread(shutil.copy2, model.weight_file, uploaded_weight)
+        if model.index_file is not None and uploaded_index is not None:
+            await asyncio.to_thread(shutil.copy2, model.index_file, uploaded_index)
+        payload: dict[str, object] = {
+            "slot_index": None,
+            "voice_changer_type": "RVC",
+            "name": model.name,
+            "model_file": uploaded_weight.name,
+            "index_file": uploaded_index.name if uploaded_index is not None else None,
+            "embedder": None,
+        }
+        try:
+            await self._request_json("POST", "/api/slot-manager/slots", payload)
+        except Exception:
+            if uploaded_weight.exists():
+                uploaded_weight.unlink()
+            if uploaded_index is not None and uploaded_index.exists():
+                uploaded_index.unlink()
+            raise
+
+        imported: list[WOkadaModel] = await self.list_rvc_models()
+        imported_matches: list[WOkadaModel] = [
+            item for item in imported if item.name == model.name
+        ]
+        if len(imported_matches) != 1:
+            raise WOkadaAPIError(
+                f"Model '{model.name}' selesai dikirim tetapi slot backend tidak ditemukan."
+            )
+        return imported_matches[0]
 
     async def convert(
         self,
@@ -179,7 +238,8 @@ class WOkadaClient:
         output: bytearray = bytearray()
         for offset in range(0, len(audio), chunk_size):
             chunk: bytes = audio[offset : offset + chunk_size]
-            converted: bytes = await self._post_chunk(chunk)
+            padded_chunk: bytes = chunk.ljust(chunk_size, b"\x00")
+            converted: bytes = await self._post_chunk(padded_chunk)
             if len(converted) % 4 != 0:
                 raise WOkadaAPIError(
                     f"Respons audio w-okada bukan float32 valid: {len(converted)} byte."
@@ -187,6 +247,9 @@ class WOkadaClient:
             output.extend(converted)
         if not output:
             raise WOkadaAPIError("w-okada tidak menghasilkan data audio.")
+        if len(output) > len(audio):
+            valid_size: int = len(audio) - (len(audio) % 4)
+            return bytes(output[:valid_size])
         return bytes(output)
 
     async def _post_chunk(self, chunk: bytes) -> bytes:
@@ -213,15 +276,20 @@ class WOkadaClient:
                         body: bytes = await response.read()
                         if response.status != 200:
                             detail: str = body.decode("utf-8", errors="replace")
-                            raise WOkadaAPIError(
+                            error_message: str = (
                                 f"w-okada POST {endpoint} gagal: status={response.status}, "
                                 f"body={detail}"
                             )
+                            if 400 <= response.status < 500:
+                                raise WOkadaRequestRejectedError(error_message)
+                            raise WOkadaAPIError(error_message)
                         if not body:
                             raise WOkadaAPIError(
                                 f"w-okada POST {endpoint} menghasilkan respons kosong."
                             )
                         return body
+            except WOkadaRequestRejectedError:
+                raise
             except (aiohttp.ClientError, asyncio.TimeoutError, WOkadaAPIError) as error:
                 last_error = error
                 if attempt < self.retry_count:

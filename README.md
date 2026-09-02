@@ -184,11 +184,13 @@ Adapter memakai endpoint `/api/voice-changer/convert_chunk`, menormalisasi audio
 Setelah backend aktif:
 
 1. Pilih converter `rvc`.
-2. Pilih **Pilih model** untuk melihat slot RVC dari backend w-okada.
+2. Pilih **Pilih model** untuk melihat model lokal dan slot RVC backend.
 3. Aktifkan Voice Converter.
 4. Gunakan **Test suara** atau Terminal TTS Queue.
 
 Jika model belum dipilih dari bot, adapter menggunakan slot yang sedang aktif pada UI w-okada.
+
+Model dengan label `[LOCAL]` dibaca dari `models/rvc/<nama>`. Ketika dipilih, file `.pth` dan `.index` disalin sementara ke `dist/upload_dir` dan didaftarkan melalui API w-okada. File sumber di `models/rvc` tetap dipertahankan. Model yang sudah terdaftar ditampilkan sebagai slot backend dan tidak diunggah ulang.
 
 ## Model Manager RVC
 
@@ -238,6 +240,27 @@ File model di dalam `models/rvc` diabaikan Git agar model berukuran besar tidak 
 - Protect: `0.0` sampai `1.0`.
 
 Pitch adalah bagian dari Voice Converter, bukan fitur gTTS. Pengaturan ini baru diterapkan oleh backend converter yang mendukungnya.
+
+### Penyimpanan pengaturan
+
+Pengaturan Voice TTS otomatis disimpan ke:
+
+```text
+data/voice_settings.json
+```
+
+Nilai berikut dipulihkan ketika menu Voice TTS dibuka kembali atau bot direstart:
+
+- TTS engine.
+- Bahasa.
+- Status Voice Converter ON/OFF.
+- Jenis converter.
+- Slot model yang dipilih.
+- Pitch.
+- Index ratio.
+- Protect.
+
+File disimpan secara atomik dan divalidasi ketika dibaca. Jika JSON rusak atau memiliki tipe nilai yang salah, bot menampilkan lokasi dan detail field yang bermasalah. File ini merupakan preferensi lokal dan tidak dimasukkan ke Git.
 
 ## Pemecahan masalah
 

@@ -216,15 +216,26 @@ async def pilih_model_w_okada(
     manager: VoiceManager,
     converter: RVCConverter,
 ) -> None:
-    models: list[WOkadaModel] = await converter.list_models()
+    local_models: list[RVCModel] = list_models(RVC_MODELS_FOLDER)
+    backend_models: list[WOkadaModel] = await converter.list_models()
+    local_names: set[str] = {model.name for model in local_models}
+    backend_only: list[WOkadaModel] = [
+        model for model in backend_models if model.name not in local_names
+    ]
     print("\n" + "=" * 40)
     print("MODEL RVC W-OKADA")
     print("=" * 40)
-    if not models:
-        print("Backend w-okada belum memiliki model RVC.")
+    if not local_models and not backend_only:
+        print("Tidak ada model di models/rvc maupun backend w-okada.")
         return
-    for nomor, model in enumerate(models, start=1):
-        print(f"{nomor}. slot={model.slot_index} | {model.name} | {model.model_file}")
+    for nomor, model in enumerate(local_models, start=1):
+        print(f"{nomor}. [LOCAL] {model.name} | {model.weight_file.name}")
+    offset: int = len(local_models)
+    for nomor, model in enumerate(backend_only, start=offset + 1):
+        print(
+            f"{nomor}. [BACKEND] slot={model.slot_index} | "
+            f"{model.name} | {model.model_file}"
+        )
     print("\nKetik exit untuk batal.")
     while True:
         pilihan: str = (await ainput("\nPilih model backend: ")).strip()
@@ -235,12 +246,21 @@ async def pilih_model_w_okada(
         except ValueError:
             print("Pilihan tidak valid.")
             continue
-        if 0 <= index < len(models):
-            selected: WOkadaModel = models[index]
+        if 0 <= index < len(local_models):
+            local_model: RVCModel = local_models[index]
+            print(f"Mendaftarkan model '{local_model.name}' ke w-okada...")
+            selected: WOkadaModel = await converter.import_model(local_model)
             settings: VoiceConverterSettings = set_model(
                 manager.converter_settings,
                 str(selected.slot_index),
             )
+            manager.set_converter_settings(settings)
+            print(f"Model backend aktif: slot={selected.slot_index} | {selected.name}")
+            return
+        backend_index: int = index - offset
+        if 0 <= backend_index < len(backend_only):
+            selected = backend_only[backend_index]
+            settings = set_model(manager.converter_settings, str(selected.slot_index))
             manager.set_converter_settings(settings)
             print(f"Model backend aktif: slot={selected.slot_index} | {selected.name}")
             return

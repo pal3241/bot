@@ -11,12 +11,14 @@ from config import (
     VOICE_CONVERTER_INDEX_RATIO,
     VOICE_CONVERTER_PITCH,
     VOICE_CONVERTER_PROTECT,
+    VOICE_SETTINGS_FILE,
 )
 from voice.converters.base import VoiceConverter
 from voice.converters.registry import create_converter
 from voice.converters.settings import VoiceConverterSettings
 from voice.providers.base import TTSProvider
 from voice.registry import create_provider
+from voice.settings_store import VoicePreferences, load_preferences, save_preferences
 
 
 class VoiceManager:
@@ -25,6 +27,7 @@ class VoiceManager:
         provider_name: str,
         language: str,
         converter_settings: VoiceConverterSettings,
+        settings_file: Path,
     ) -> None:
         self.provider_name: str = provider_name
         self.provider: TTSProvider = create_provider(provider_name)
@@ -34,10 +37,11 @@ class VoiceManager:
             converter_settings.converter,
             converter_settings,
         )
+        self.settings_file: Path = settings_file
 
     @classmethod
     def from_config(cls) -> "VoiceManager":
-        settings: VoiceConverterSettings = VoiceConverterSettings(
+        initial_converter: VoiceConverterSettings = VoiceConverterSettings(
             enabled=VOICE_CONVERTER_ENABLED,
             converter=VOICE_CONVERTER,
             model=None,
@@ -45,23 +49,47 @@ class VoiceManager:
             index_ratio=VOICE_CONVERTER_INDEX_RATIO,
             protect=VOICE_CONVERTER_PROTECT,
         )
-        return cls(TTS_PROVIDER, TTS_LANGUAGE, settings)
+        initial: VoicePreferences = VoicePreferences(
+            provider_name=TTS_PROVIDER,
+            language=TTS_LANGUAGE,
+            converter=initial_converter,
+        )
+        preferences: VoicePreferences = load_preferences(VOICE_SETTINGS_FILE, initial)
+        return cls(
+            preferences.provider_name,
+            preferences.language,
+            preferences.converter,
+            VOICE_SETTINGS_FILE,
+        )
 
     def set_provider(self, provider_name: str) -> None:
         provider: TTSProvider = create_provider(provider_name)
         self.provider = provider
         self.provider_name = provider_name.strip().lower()
+        self._save_preferences()
 
     def set_language(self, language: str) -> None:
         normalized_language: str = language.strip().lower()
         if not normalized_language:
             raise ValueError("Kode bahasa TTS tidak boleh kosong.")
         self.language = normalized_language
+        self._save_preferences()
 
     def set_converter_settings(self, settings: VoiceConverterSettings) -> None:
         converter: VoiceConverter = create_converter(settings.converter, settings)
         self.converter_settings = settings
         self.converter = converter
+        self._save_preferences()
+
+    def _save_preferences(self) -> None:
+        save_preferences(
+            self.settings_file,
+            VoicePreferences(
+                provider_name=self.provider_name,
+                language=self.language,
+                converter=self.converter_settings,
+            ),
+        )
 
     async def speak(self, voice_client: discord.VoiceClient, text: str) -> None:
         if not voice_client.is_connected():

@@ -5,3 +5,4 @@ __pycache__/
 temp/
 models/rvc/*
 !models/rvc/.gitkeep
+data/voice_settings.json

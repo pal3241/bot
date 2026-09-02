@@ -6,10 +6,12 @@ from config import (
     RVC_REQUEST_TIMEOUT_SECONDS,
     TTS_RETRY_COUNT,
     TTS_RETRY_DELAY_SECONDS,
+    W_OKADA_FOLDER,
 )
 from voice.converters.base import VoiceConverter
 from voice.converters.settings import VoiceConverterSettings
 from voice.converters.w_okada_client import WOkadaClient, WOkadaModel
+from voice.models import RVCModel
 
 
 class RVCConverter(VoiceConverter):
@@ -40,3 +42,6 @@ class RVCConverter(VoiceConverter):
 
     async def list_models(self) -> list[WOkadaModel]:
         return await self.client.list_rvc_models()
+
+    async def import_model(self, model: RVCModel) -> WOkadaModel:
+        return await self.client.import_model(model, W_OKADA_FOLDER)
