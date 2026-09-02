@@ -4,6 +4,7 @@ import uuid
 from pathlib import Path
 
 from voice.converters.base import VoiceConverter
+from voice.converters.settings import VoiceConverterSettings
 
 
 class PassthroughConverter(VoiceConverter):
@@ -24,3 +25,8 @@ class PassthroughConverter(VoiceConverter):
             raise RuntimeError(f"Converter menghasilkan file kosong: {output}")
         return output
 
+    def update_settings(self, settings: VoiceConverterSettings) -> None:
+        return
+
+    async def close(self) -> None:
+        return

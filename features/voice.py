@@ -104,7 +104,7 @@ async def terminal_tts(ctx: AppContext, manager: VoiceManager) -> None:
             posisi: int = await queue.enqueue(text)
             print(f"QUEUE > ditambahkan, menunggu={posisi}")
     finally:
-        if queue.worker is not None and not queue.worker.done():
+        if not queue.is_finished:
             await queue.finish()
 
 
@@ -174,7 +174,7 @@ async def pilih_converter(manager: VoiceManager) -> None:
                 manager.converter_settings,
                 names[index],
             )
-            manager.set_converter_settings(settings)
+            await manager.set_converter_settings(settings)
             print(f"Voice converter aktif: {settings.converter}")
             return
         print("Pilihan tidak valid.")
@@ -206,7 +206,7 @@ async def pilih_model(manager: VoiceManager) -> None:
                 manager.converter_settings,
                 models[index].name,
             )
-            manager.set_converter_settings(settings)
+            await manager.set_converter_settings(settings)
             print(f"Model aktif: {models[index].name}")
             return
         print("Pilihan tidak valid.")
@@ -254,14 +254,14 @@ async def pilih_model_w_okada(
                 manager.converter_settings,
                 str(selected.slot_index),
             )
-            manager.set_converter_settings(settings)
+            await manager.set_converter_settings(settings)
             print(f"Model backend aktif: slot={selected.slot_index} | {selected.name}")
             return
         backend_index: int = index - offset
         if 0 <= backend_index < len(backend_only):
             selected = backend_only[backend_index]
             settings = set_model(manager.converter_settings, str(selected.slot_index))
-            manager.set_converter_settings(settings)
+            await manager.set_converter_settings(settings)
             print(f"Model backend aktif: slot={selected.slot_index} | {selected.name}")
             return
         print("Pilihan tidak valid.")
@@ -298,7 +298,9 @@ async def model_manager(manager: VoiceManager) -> None:
                 continue
             delete_model(RVC_MODELS_FOLDER, name)
             if manager.converter_settings.model == name:
-                manager.set_converter_settings(set_model(manager.converter_settings, None))
+                await manager.set_converter_settings(
+                    set_model(manager.converter_settings, None)
+                )
             print(f"Model dihapus: {name}")
         elif pilihan == "5":
             name = (await ainput("Nama model: ")).strip()
@@ -314,7 +316,7 @@ async def model_manager(manager: VoiceManager) -> None:
 async def atur_pitch(manager: VoiceManager) -> None:
     raw_value: str = (await ainput("Pitch (-24 sampai +24): ")).strip()
     settings: VoiceConverterSettings = set_pitch(manager.converter_settings, int(raw_value))
-    manager.set_converter_settings(settings)
+    await manager.set_converter_settings(settings)
     print(f"Pitch aktif: {settings.pitch:+d}")
 
 
@@ -324,7 +326,7 @@ async def atur_index_ratio(manager: VoiceManager) -> None:
         manager.converter_settings,
         float(raw_value),
     )
-    manager.set_converter_settings(settings)
+    await manager.set_converter_settings(settings)
     print(f"Index ratio aktif: {settings.index_ratio:.2f}")
 
 
@@ -334,7 +336,7 @@ async def atur_protect(manager: VoiceManager) -> None:
         manager.converter_settings,
         float(raw_value),
     )
-    manager.set_converter_settings(settings)
+    await manager.set_converter_settings(settings)
     print(f"Protect aktif: {settings.protect:.2f}")
 
 
@@ -364,6 +366,13 @@ async def disconnect_voice(ctx: AppContext) -> None:
 @feature("Voice TTS")
 async def voice_feature(ctx: AppContext) -> None:
     manager: VoiceManager = VoiceManager.from_config()
+    try:
+        await voice_menu(ctx, manager)
+    finally:
+        await manager.close()
+
+
+async def voice_menu(ctx: AppContext, manager: VoiceManager) -> None:
     while True:
         connected_channel: str = "belum terhubung"
         if ctx.guild is not None and ctx.guild.voice_client is not None:
@@ -416,7 +425,9 @@ async def voice_feature(ctx: AppContext) -> None:
         elif pilihan == "6":
             await pilih_bahasa(manager)
         elif pilihan == "7":
-            manager.set_converter_settings(set_enabled(settings, not settings.enabled))
+            await manager.set_converter_settings(
+                set_enabled(settings, not settings.enabled)
+            )
             print(f"Voice Converter: {'ON' if not settings.enabled else 'OFF'}")
         elif pilihan == "8":
             await pilih_converter(manager)

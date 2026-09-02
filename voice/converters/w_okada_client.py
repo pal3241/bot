@@ -30,18 +30,47 @@ class WOkadaClient:
         self,
         base_url: str,
         timeout_seconds: float,
+        config_timeout_seconds: float,
         chunk_seconds: float,
         retry_count: int,
         retry_delay_seconds: float,
     ) -> None:
         self.base_url: str = base_url.rstrip("/")
         self.timeout_seconds: float = timeout_seconds
+        self.config_timeout_seconds: float = config_timeout_seconds
         self.chunk_seconds: float = chunk_seconds
         self.retry_count: int = retry_count
         self.retry_delay_seconds: float = retry_delay_seconds
         self.sample_rate: int = 48_000
         self.temp_folder: Path = Path("temp/converter")
         self.temp_folder.mkdir(parents=True, exist_ok=True)
+        self._session: aiohttp.ClientSession | None = None
+        self._model_cache_initialized: bool = False
+        self._cached_model_key: str | None = None
+        self._cached_slot_index: int | None = None
+        self._cached_current_slot: int | None = None
+        self._cached_configuration: dict[str, object] | None = None
+        self._cached_rvc_settings: tuple[int, int, float, float] | None = None
+
+    async def close(self) -> None:
+        if self._session is not None and not self._session.closed:
+            await self._session.close()
+        self._session = None
+        self._invalidate_cache()
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            connector: aiohttp.TCPConnector = aiohttp.TCPConnector(limit=4)
+            self._session = aiohttp.ClientSession(connector=connector)
+        return self._session
+
+    def _invalidate_cache(self) -> None:
+        self._model_cache_initialized = False
+        self._cached_model_key = None
+        self._cached_slot_index = None
+        self._cached_current_slot = None
+        self._cached_configuration = None
+        self._cached_rvc_settings = None
 
     async def list_rvc_models(self) -> list[WOkadaModel]:
         slots_value: object = await self._get_json_value("/api/slot-manager/slots")
@@ -113,6 +142,7 @@ class WOkadaClient:
             raise WOkadaAPIError(
                 f"Model '{model.name}' selesai dikirim tetapi slot backend tidak ditemukan."
             )
+        self._invalidate_cache()
         return imported_matches[0]
 
     async def convert(
@@ -123,18 +153,19 @@ class WOkadaClient:
         index_ratio: float,
         protect: float,
     ) -> Path:
-        configuration: dict[str, object] = await self._get_json(
-            "/api/configuration-manager/configuration"
-        )
-        slot_index: int = await self._resolve_slot(model, configuration)
+        total_started: float = time.perf_counter()
+        config_started: float = time.perf_counter()
+        slot_index: int = await self._resolve_slot(model)
         await self._configure_slot(slot_index, pitch, index_ratio, protect)
-        await self._select_slot(configuration, slot_index)
+        await self._select_slot(slot_index)
+        config_elapsed: float = time.perf_counter() - config_started
 
         identifier: str = uuid.uuid4().hex
         input_raw: Path = self.temp_folder / f"{identifier}-input.f32"
         output_raw: Path = self.temp_folder / f"{identifier}-output.f32"
         output_wav: Path = self.temp_folder / f"{identifier}.wav"
         try:
+            ffmpeg_input_started: float = time.perf_counter()
             await self._run_ffmpeg(
                 (
                     "ffmpeg",
@@ -152,8 +183,12 @@ class WOkadaClient:
                     str(input_raw),
                 )
             )
+            ffmpeg_input_elapsed: float = time.perf_counter() - ffmpeg_input_started
+            convert_started: float = time.perf_counter()
             converted: bytes = await self._convert_audio(input_raw.read_bytes())
+            convert_elapsed: float = time.perf_counter() - convert_started
             output_raw.write_bytes(converted)
+            ffmpeg_output_started: float = time.perf_counter()
             await self._run_ffmpeg(
                 (
                     "ffmpeg",
@@ -171,6 +206,7 @@ class WOkadaClient:
                     str(output_wav),
                 )
             )
+            ffmpeg_output_elapsed: float = time.perf_counter() - ffmpeg_output_started
         finally:
             if input_raw.exists():
                 input_raw.unlink()
@@ -179,27 +215,46 @@ class WOkadaClient:
 
         if not output_wav.is_file() or output_wav.stat().st_size == 0:
             raise WOkadaAPIError("w-okada menghasilkan file audio kosong.")
+        total_elapsed: float = time.perf_counter() - total_started
+        print(
+            "[VOICE PERF] "
+            f"rvc_config={config_elapsed:.3f}s "
+            f"ffmpeg_input={ffmpeg_input_elapsed:.3f}s "
+            f"rvc_convert={convert_elapsed:.3f}s "
+            f"ffmpeg_output={ffmpeg_output_elapsed:.3f}s "
+            f"rvc_total={total_elapsed:.3f}s"
+        )
         return output_wav
 
     async def _resolve_slot(
         self,
         model: str | None,
-        configuration: dict[str, object],
     ) -> int:
+        if self._model_cache_initialized and model == self._cached_model_key:
+            if self._cached_slot_index is None:
+                raise WOkadaAPIError("Cache model w-okada tidak memiliki slot index.")
+            return self._cached_slot_index
         if model is None:
-            return self._require_int(configuration, "current_slot_index")
-        if model.isdecimal():
+            configuration: dict[str, object] = await self._get_configuration()
+            slot_index: int = self._require_int(configuration, "current_slot_index")
+        elif model.isdecimal():
             slot_index: int = int(model)
             await self._get_slot(slot_index)
-            return slot_index
-
-        for backend_model in await self.list_rvc_models():
-            if backend_model.name == model:
-                return backend_model.slot_index
-        raise WOkadaAPIError(
-            f"Model '{model}' tidak ditemukan pada slot backend w-okada. "
-            "Impor model melalui UI w-okada atau gunakan nomor slot."
-        )
+        else:
+            matches: list[WOkadaModel] = [
+                backend_model
+                for backend_model in await self.list_rvc_models()
+                if backend_model.name == model
+            ]
+            if len(matches) != 1:
+                raise WOkadaAPIError(
+                    f"Model '{model}' tidak ditemukan secara unik pada backend w-okada."
+                )
+            slot_index = matches[0].slot_index
+        self._model_cache_initialized = True
+        self._cached_model_key = model
+        self._cached_slot_index = slot_index
+        return slot_index
 
     async def _configure_slot(
         self,
@@ -208,6 +263,14 @@ class WOkadaClient:
         index_ratio: float,
         protect: float,
     ) -> None:
+        requested: tuple[int, int, float, float] = (
+            slot_index,
+            pitch,
+            index_ratio,
+            protect,
+        )
+        if requested == self._cached_rvc_settings:
+            return
         slot: dict[str, object] = await self._get_slot(slot_index)
         if slot.get("voice_changer_type") != "RVC":
             raise WOkadaAPIError(f"Slot w-okada {slot_index} bukan model RVC.")
@@ -215,16 +278,33 @@ class WOkadaClient:
         slot["index_ratio"] = index_ratio
         slot["protect_ratio"] = protect
         await self._put_json(f"/api/slot-manager/slots/{slot_index}", slot)
+        self._cached_rvc_settings = requested
 
     async def _select_slot(
         self,
-        configuration: dict[str, object],
         slot_index: int,
     ) -> None:
+        if self._cached_current_slot == slot_index:
+            return
+        configuration: dict[str, object] = await self._get_configuration()
         if configuration.get("current_slot_index") == slot_index:
+            self._cached_current_slot = slot_index
             return
         configuration["current_slot_index"] = slot_index
         await self._put_json("/api/configuration-manager/configuration", configuration)
+        self._cached_current_slot = slot_index
+        self._cached_configuration = configuration
+
+    async def _get_configuration(self) -> dict[str, object]:
+        if self._cached_configuration is None:
+            self._cached_configuration = await self._get_json(
+                "/api/configuration-manager/configuration"
+            )
+            self._cached_current_slot = self._require_int(
+                self._cached_configuration,
+                "current_slot_index",
+            )
+        return self._cached_configuration
 
     async def _get_slot(self, slot_index: int) -> dict[str, object]:
         return await self._get_json(f"/api/slot-manager/slots/{slot_index}")
@@ -264,33 +344,34 @@ class WOkadaClient:
                 content_type="application/octet-stream",
             )
             try:
-                timeout: aiohttp.ClientTimeout = aiohttp.ClientTimeout(
-                    total=self.timeout_seconds
-                )
-                async with aiohttp.ClientSession(timeout=timeout) as session:
-                    async with session.post(
-                        self.base_url + endpoint,
-                        data=form,
-                        headers={"x-timestamp": str(int(time.time() * 1000))},
-                    ) as response:
-                        body: bytes = await response.read()
-                        if response.status != 200:
-                            detail: str = body.decode("utf-8", errors="replace")
-                            error_message: str = (
-                                f"w-okada POST {endpoint} gagal: status={response.status}, "
-                                f"body={detail}"
-                            )
-                            if 400 <= response.status < 500:
-                                raise WOkadaRequestRejectedError(error_message)
-                            raise WOkadaAPIError(error_message)
-                        if not body:
-                            raise WOkadaAPIError(
-                                f"w-okada POST {endpoint} menghasilkan respons kosong."
-                            )
-                        return body
+                timeout: aiohttp.ClientTimeout = aiohttp.ClientTimeout(total=self.timeout_seconds)
+                session: aiohttp.ClientSession = await self._get_session()
+                async with session.post(
+                    self.base_url + endpoint,
+                    data=form,
+                    headers={"x-timestamp": str(int(time.time() * 1000))},
+                    timeout=timeout,
+                ) as response:
+                    body: bytes = await response.read()
+                    if response.status != 200:
+                        detail: str = body.decode("utf-8", errors="replace")
+                        error_message: str = (
+                            f"w-okada POST {endpoint} gagal: status={response.status}, "
+                            f"body={detail}"
+                        )
+                        if 400 <= response.status < 500:
+                            raise WOkadaRequestRejectedError(error_message)
+                        raise WOkadaAPIError(error_message)
+                    if not body:
+                        raise WOkadaAPIError(
+                            f"w-okada POST {endpoint} menghasilkan respons kosong."
+                        )
+                    return body
             except WOkadaRequestRejectedError:
+                self._invalidate_cache()
                 raise
             except (aiohttp.ClientError, asyncio.TimeoutError, WOkadaAPIError) as error:
+                self._invalidate_cache()
                 last_error = error
                 if attempt < self.retry_count:
                     print(
@@ -327,27 +408,29 @@ class WOkadaClient:
         for attempt in range(1, self.retry_count + 1):
             try:
                 timeout: aiohttp.ClientTimeout = aiohttp.ClientTimeout(
-                    total=self.timeout_seconds
+                    total=self.config_timeout_seconds
                 )
-                async with aiohttp.ClientSession(timeout=timeout) as session:
-                    async with session.request(
-                        method,
-                        self.base_url + endpoint,
-                        json=payload,
-                    ) as response:
-                        body: str = await response.text()
-                        if response.status != 200:
-                            raise WOkadaAPIError(
-                                f"w-okada {method} {endpoint} gagal: "
-                                f"status={response.status}, body={body}"
-                            )
-                        try:
-                            return await response.json(content_type=None)
-                        except ValueError as error:
-                            raise WOkadaAPIError(
-                                f"w-okada {method} {endpoint} tidak menghasilkan JSON: {body}"
-                            ) from error
+                session: aiohttp.ClientSession = await self._get_session()
+                async with session.request(
+                    method,
+                    self.base_url + endpoint,
+                    json=payload,
+                    timeout=timeout,
+                ) as response:
+                    body: str = await response.text()
+                    if response.status != 200:
+                        raise WOkadaAPIError(
+                            f"w-okada {method} {endpoint} gagal: "
+                            f"status={response.status}, body={body}"
+                        )
+                    try:
+                        return await response.json(content_type=None)
+                    except ValueError as error:
+                        raise WOkadaAPIError(
+                            f"w-okada {method} {endpoint} tidak menghasilkan JSON: {body}"
+                        ) from error
             except (aiohttp.ClientError, asyncio.TimeoutError, WOkadaAPIError) as error:
+                self._invalidate_cache()
                 last_error = error
                 if attempt < self.retry_count:
                     print(

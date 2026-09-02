@@ -134,6 +134,23 @@ VOICE [1] > selesai
 
 Anda dapat terus menambahkan teks saat bot berbicara. Audio diproses satu per satu. Ketik `exit` untuk menunggu antrean selesai dan kembali.
 
+TTS Queue menggunakan dua tahap terpisah:
+
+```text
+Text Queue -> Preparation TTS/RVC -> Ready Queue -> Discord Playback
+```
+
+Ketika audio pertama sedang diputar, audio berikutnya sudah dapat menjalankan TTS dan RVC. Ready queue dibatasi maksimal dua audio agar file sementara tidak menumpuk. Urutan pesan tetap dipertahankan dan hanya satu konversi RVC berjalan pada satu waktu.
+
+Terminal menampilkan metrics performa seperti:
+
+```text
+[VOICE PERF] tts=0.320s rvc=2.410s total_prepare=2.730s
+[VOICE PERF] queue_wait=0.050s playback_wait=0.000s playback=3.200s
+```
+
+Client w-okada menggunakan koneksi HTTP persisten dan melewati request konfigurasi yang nilainya tidak berubah. Cache otomatis direset ketika request backend gagal atau converter diganti.
+
 Bahasa default adalah bahasa Indonesia dengan kode `id`. Gunakan menu **Pilih bahasa** untuk menggantinya, misalnya:
 
 - `id` untuk bahasa Indonesia.

@@ -3,6 +3,7 @@ from pathlib import Path
 from config import (
     RVC_BASE_URL,
     RVC_CHUNK_SECONDS,
+    RVC_CONFIG_TIMEOUT_SECONDS,
     RVC_REQUEST_TIMEOUT_SECONDS,
     TTS_RETRY_COUNT,
     TTS_RETRY_DELAY_SECONDS,
@@ -22,6 +23,7 @@ class RVCConverter(VoiceConverter):
         self.client: WOkadaClient = WOkadaClient(
             base_url=RVC_BASE_URL,
             timeout_seconds=RVC_REQUEST_TIMEOUT_SECONDS,
+            config_timeout_seconds=RVC_CONFIG_TIMEOUT_SECONDS,
             chunk_seconds=RVC_CHUNK_SECONDS,
             retry_count=TTS_RETRY_COUNT,
             retry_delay_seconds=TTS_RETRY_DELAY_SECONDS,
@@ -45,3 +47,9 @@ class RVCConverter(VoiceConverter):
 
     async def import_model(self, model: RVCModel) -> WOkadaModel:
         return await self.client.import_model(model, W_OKADA_FOLDER)
+
+    def update_settings(self, settings: VoiceConverterSettings) -> None:
+        self.settings = settings
+
+    async def close(self) -> None:
+        await self.client.close()
