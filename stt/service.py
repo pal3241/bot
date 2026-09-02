@@ -67,13 +67,28 @@ class STTService:
             on_utterance=self._submit,
         )
         loop: asyncio.AbstractEventLoop = asyncio.get_running_loop()
-        sink: PerUserPCMSink = PerUserPCMSink(
+        vad: PerUserVAD = self._vad
+        receiver: DiscordVoiceReceiver
+
+        def handle_pcm(user_id: int, pcm: bytes) -> None:
+            receiver.mark_healthy()
+            vad.ingest(user_id, pcm)
+
+        def create_sink() -> PerUserPCMSink:
+            return PerUserPCMSink(
+                loop=loop,
+                bot_user_id=self._bot_user_id,
+                pcm_handler=handle_pcm,
+                assistant_speaking=lambda: self._assistant_speaking,
+            )
+
+        receiver = DiscordVoiceReceiver(
             loop=loop,
-            bot_user_id=self._bot_user_id,
-            pcm_handler=self._vad.ingest,
-            assistant_speaking=lambda: self._assistant_speaking,
+            sink_factory=create_sink,
+            restart_attempts=3,
+            restart_delay_seconds=1.0,
         )
-        self._receiver = DiscordVoiceReceiver(sink)
+        self._receiver = receiver
         self._receiver.start(client)
         if self._output_worker is None or self._output_worker.done():
             self._output_worker = asyncio.create_task(
