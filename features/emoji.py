@@ -18,6 +18,14 @@ def buat_nama_emoji(existing_names: set[str]) -> str:
         nomor += 1
 
 
+def cari_file_gif(folder: Path) -> list[Path]:
+    return sorted(
+        file_path
+        for file_path in folder.iterdir()
+        if file_path.is_file() and file_path.suffix.lower() == ".gif"
+    )
+
+
 async def tambah_emoji(ctx: AppContext) -> None:
     if ctx.guild is None and await pilih_server(ctx) is None:
         return
@@ -26,7 +34,7 @@ async def tambah_emoji(ctx: AppContext) -> None:
     if not GIF_FOLDER.is_dir():
         raise FileNotFoundError(f"Folder GIF tidak ditemukan: {GIF_FOLDER}")
 
-    files: list[Path] = sorted(GIF_FOLDER.glob("*.gif"))
+    files: list[Path] = cari_file_gif(GIF_FOLDER)
     if not files:
         print(f"\nTidak ada GIF di folder: {GIF_FOLDER}")
         return
@@ -182,4 +190,3 @@ async def emoji_feature(ctx: AppContext) -> None:
             return
         else:
             print("Pilihan tidak tersedia.")
-
