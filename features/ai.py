@@ -90,11 +90,14 @@ def _show_status(manager: AssistantManager) -> None:
     print(f"Session timeout   : {settings.chat_timeout_seconds:.1f} detik")
     print(f"History maksimal  : {settings.history_max_messages} message")
     print(f"Personality       : {personality.name}")
+    print(f"Archetype         : {personality.personality.archetype}")
+    print(f"Dominance         : {personality.personality.dominance}/10")
+    print(f"Roughness         : {personality.roughness_rules.level}/10")
     print(f"Tone              : {personality.style.tone}")
     print(f"Response length   : {personality.style.response_length}")
     print(f"Emoji usage       : {personality.style.emoji_usage}")
     print(f"Language mode     : {personality.language.mode}")
-    print(f"Default language  : {personality.language.default}")
+    print(f"Default language  : {personality.language.default_language}")
     print(f"OpenRouter key    : {_api_key_status('OPENROUTER_API_KEY')}")
     print(f"NVIDIA NIM key    : {_api_key_status('NVIDIA_NIM_API_KEY')}")
 
@@ -131,7 +134,8 @@ async def _personality_menu(manager: AssistantManager) -> None:
         print(f"Formality  : {style.formality}")
         print(f"Length     : {style.response_length}")
         print(f"Emoji      : {style.emoji_usage}")
-        print(f"Language   : {language.mode} (default={language.default})")
+        print(f"Archetype  : {config.personality.archetype}")
+        print(f"Language   : {language.mode} (default={language.default_language})")
         print("\n1. Nama")
         print("2. Deskripsi")
         print("3. Role")
@@ -144,12 +148,12 @@ async def _personality_menu(manager: AssistantManager) -> None:
         print("10. Emoji usage")
         print("11. Language mode")
         print("12. Default language")
-        print("13. Match user language ON/OFF")
-        print("14. Natural conversation ON/OFF")
-        print("15. Avoid repeating user ON/OFF")
-        print("16. Avoid overexplaining ON/OFF")
-        print("17. Avoid robotic phrasing ON/OFF")
-        print("18. Ask follow-up when useful ON/OFF")
+        print("13. Follow user language ON/OFF")
+        print("14. Direct ON/OFF")
+        print("15. Protective ON/OFF")
+        print("16. Slightly rude ON/OFF")
+        print("17. Playful teasing ON/OFF")
+        print("18. Likes to correct user ON/OFF")
         print("19. Reload config dari file")
         print("\nexit = kembali")
         choice: str = (await ainput("\nPilih: ")).strip().lower()
@@ -187,22 +191,24 @@ async def _personality_menu(manager: AssistantManager) -> None:
         elif choice == "12":
             default_language: str = (await ainput("Kode bahasa default: ")).strip()
             updated = replace(
-                config, language=replace(language, default=default_language)
+                config,
+                language=replace(language, default_language=default_language),
             )
         elif choice == "13":
             updated = replace(
                 config,
                 language=replace(
-                    language, match_user_language=not language.match_user_language
+                    language,
+                    follow_user_language=not language.follow_user_language,
                 ),
             )
         elif choice in {"14", "15", "16", "17", "18"}:
             behavior_field_by_choice: dict[str, str] = {
-                "14": "natural_conversation",
-                "15": "avoid_repeating_user",
-                "16": "avoid_overexplaining",
-                "17": "avoid_robotic_phrasing",
-                "18": "ask_followup_when_useful",
+                "14": "direct",
+                "15": "protective",
+                "16": "slightly_rude",
+                "17": "playful_teasing",
+                "18": "likes_to_correct_user",
             }
             behavior_field: str = behavior_field_by_choice[choice]
             current: bool = getattr(behavior, behavior_field)

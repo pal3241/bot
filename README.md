@@ -151,7 +151,7 @@ Personality Phase 2 aktif berada di:
 config/personality.json
 ```
 
-File JSON tersebut mengatur identity, tone, energy, humor, friendliness, formality, panjang respons, penggunaan emoji, bahasa, dan behavior percakapan. Nilainya dapat diedit melalui **AI Settings > Personality Settings** atau langsung di file lalu memilih **Reload personality**. Nilai tidak dikenal menggunakan default yang aman tanpa mematikan bot. Kebijakan bahasa default adalah `auto`, sehingga Sena mengikuti bahasa pesan terbaru secara natural.
+File JSON tersebut mengatur identity, tone, energy, humor, friendliness, formality, panjang respons, penggunaan emoji, bahasa, trait level 0–10, helping style, roughness rules, adaptasi konteks, dan behavior percakapan. Bagian `speech` menyimpan preferred expressions serta contoh praise/correction untuk integrasi respons lanjutan. Nilainya dapat diedit melalui **AI Settings > Personality Settings** atau langsung di file lalu memilih **Reload personality**. Nilai tidak dikenal menggunakan default yang aman tanpa mematikan bot. Kebijakan bahasa default adalah `auto`, sehingga Sena mengikuti bahasa pesan terbaru secara natural.
 
 ## Voice TTS Queue
 
