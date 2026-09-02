@@ -1,7 +1,6 @@
 import asyncio
 import os
 
-from assistant.language import build_language_prompt
 from assistant.llm.base import ChatMessage
 from assistant.llm.manager import LLMManager
 from assistant.llm.registry import create_provider
@@ -21,8 +20,6 @@ from config import (
     OPENROUTER_MODEL,
     SENA_CHAT_TIMEOUT_SECONDS,
     SENA_HISTORY_MAX_MESSAGES,
-    SENA_LANGUAGE,
-    SENA_LANGUAGE_MODE,
     SENA_PERSONALITY_FILE,
 )
 
@@ -33,13 +30,11 @@ class AssistantManager:
         personality: PersonalityManager,
         sessions: SessionManager,
         llm: LLMManager,
-        language_prompt: str,
         settings: AISettings,
     ) -> None:
         self.personality: PersonalityManager = personality
         self.sessions: SessionManager = sessions
         self._llm: LLMManager = llm
-        self._language_prompt: str = language_prompt
         self.settings: AISettings = settings
         self._llm_lock: asyncio.Lock = asyncio.Lock()
 
@@ -58,8 +53,7 @@ class AssistantManager:
         session = self.sessions.get(key)
         async with session.lock:
             system_prompt: str = (
-                f"{self.personality.load()}\n\n{self._language_prompt}\n"
-                f"Current input source: {source}."
+                f"{self.personality.load()}\nCurrent input source: {source}."
             )
             messages: list[ChatMessage] = [
                 ChatMessage(role="system", content=system_prompt),
@@ -89,15 +83,11 @@ class AssistantManager:
             timeout_seconds=settings.chat_timeout_seconds,
             history_max_messages=settings.history_max_messages,
         )
-        replacement_language: str = build_language_prompt(
-            settings.language_mode, settings.language
-        )
         async with self._llm_lock:
             previous_llm: LLMManager = self._llm
             previous_sessions: SessionManager = self.sessions
             self._llm = replacement_llm
             self.sessions = replacement_sessions
-            self._language_prompt = replacement_language
             self.settings = settings
             previous_sessions.clear()
             await previous_llm.close()
@@ -119,8 +109,6 @@ def build_assistant_manager() -> AssistantManager:
             retry_delay_seconds=LLM_RETRY_DELAY_SECONDS,
             chat_timeout_seconds=SENA_CHAT_TIMEOUT_SECONDS,
             history_max_messages=SENA_HISTORY_MAX_MESSAGES,
-            language_mode=SENA_LANGUAGE_MODE,
-            language=SENA_LANGUAGE,
         ),
     )
     llm: LLMManager = build_llm_manager(settings)
@@ -131,7 +119,6 @@ def build_assistant_manager() -> AssistantManager:
             history_max_messages=settings.history_max_messages,
         ),
         llm=llm,
-        language_prompt=build_language_prompt(settings.language_mode, settings.language),
         settings=settings,
     )
 

@@ -15,8 +15,6 @@ class AISettings:
     retry_delay_seconds: float
     chat_timeout_seconds: float
     history_max_messages: int
-    language_mode: str
-    language: str
 
 
 def validate_settings(settings: AISettings) -> AISettings:
@@ -40,10 +38,6 @@ def validate_settings(settings: AISettings) -> AISettings:
         raise ValueError("Session timeout harus lebih besar dari nol.")
     if settings.history_max_messages <= 0:
         raise ValueError("Batas history harus lebih besar dari nol.")
-    if settings.language_mode not in {"auto", "fixed"}:
-        raise ValueError("Language mode harus 'auto' atau 'fixed'.")
-    if not settings.language.strip():
-        raise ValueError("Kode bahasa tidak boleh kosong.")
     return settings
 
 
@@ -74,8 +68,6 @@ def load_settings(path: Path, initial: AISettings) -> AISettings:
             retry_delay_seconds=_number(parsed, "retry_delay_seconds", path),
             chat_timeout_seconds=_number(parsed, "chat_timeout_seconds", path),
             history_max_messages=_integer(parsed, "history_max_messages", path),
-            language_mode=_string(parsed, "language_mode", path),
-            language=_string(parsed, "language", path),
         )
     )
 

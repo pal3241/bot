@@ -31,6 +31,4 @@ LLM_RETRY_COUNT: int = 2
 LLM_RETRY_DELAY_SECONDS: float = 1.0
 SENA_CHAT_TIMEOUT_SECONDS: float = 120.0
 SENA_HISTORY_MAX_MESSAGES: int = 20
-SENA_PERSONALITY_FILE: Path = Path("data/personality.txt")
-SENA_LANGUAGE_MODE: str = "auto"
-SENA_LANGUAGE: str = "id"
+SENA_PERSONALITY_FILE: Path = Path("config/personality.json")

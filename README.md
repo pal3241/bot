@@ -145,13 +145,13 @@ Sena tidak membalas seluruh channel secara otomatis. Setiap percakapan terpisah 
 
 Sesi ACTIVE kembali menjadi INACTIVE setelah 120 detik tanpa aktivitas. History hanya disimpan di RAM, dibatasi 20 message, dan dihapus saat sesi timeout, dibisukan, atau bot ditutup.
 
-Personality aktif berada di:
+Personality Phase 2 aktif berada di:
 
 ```text
-data/personality.txt
+config/personality.json
 ```
 
-Edit file tersebut untuk mengubah gaya Sena. `PersonalityManager.reload()` tersedia untuk integrasi reload saat runtime; restart bot juga memuat versi file terbaru. Kebijakan bahasa default adalah `auto`, sehingga Sena mengikuti bahasa pesan terbaru secara natural.
+File JSON tersebut mengatur identity, tone, energy, humor, friendliness, formality, panjang respons, penggunaan emoji, bahasa, dan behavior percakapan. Nilainya dapat diedit melalui **AI Settings > Personality Settings** atau langsung di file lalu memilih **Reload personality**. Nilai tidak dikenal menggunakan default yang aman tanpa mematikan bot. Kebijakan bahasa default adalah `auto`, sehingga Sena mengikuti bahasa pesan terbaru secara natural.
 
 ## Voice TTS Queue
 
