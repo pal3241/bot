@@ -8,3 +8,6 @@ models/rvc/*
 data/voice_settings.json
 data/ai_settings.json
 data/stt_settings.json
+data/sena_memory.db
+data/sena_memory.db-shm
+data/sena_memory.db-wal

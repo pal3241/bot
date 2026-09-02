@@ -43,6 +43,7 @@ TOKEN=TOKEN_BOT_DISCORD
 LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=API_KEY_OPENROUTER
 OPENROUTER_MODEL=openai/gpt-4o-mini
+SENA_OWNER_ID=123456789012345678
 ```
 
 Untuk memakai NVIDIA NIM, ganti konfigurasi provider:
@@ -143,9 +144,23 @@ Sena tidak membalas seluruh channel secara otomatis. Discord text memakai short-
 3. Balasan antar-user tanpa mention Sena diabaikan sepenuhnya.
 4. Gunakan `@Sena diam`, `@Sena tidur`, `@Sena stop`, `@Sena mute`, `@Sena shut up`, atau `@Sena sleep` untuk membisukan sesi.
 5. Gunakan `Sen bangun` atau `@Sena bangun` untuk mengaktifkan kembali sesi.
-4. Mention bot lagi untuk mengaktifkannya kembali.
 
 Sesi ACTIVE kembali menjadi INACTIVE setelah 120 detik tanpa aktivitas. History hanya disimpan di RAM, dibatasi 20 message, dan dihapus saat sesi timeout, dibisukan, atau bot ditutup.
+
+### Owner dan long-term memory
+
+Isi `SENA_OWNER_ID` dengan Discord user ID owner, bukan username atau nickname. Jika kosong atau tidak valid, bot tetap berjalan tetapi fitur owner dan long-term memory dinonaktifkan.
+
+Memory V1 hanya tersedia untuk owner. Sena menganggap owner sebagai ayah dan dirinya sebagai anak perempuan secara natural tanpa menjadikannya sebutan wajib. Memory disimpan secara private di `data/sena_memory.db`; pengguna biasa tidak menerima relationship context atau memory tersebut.
+
+Perintah eksplisit yang didukung:
+
+- `Sen ingat bahwa gue lebih suka Python`
+- `Sen simpan ini project gue namanya Sena`
+- `Sen lupakan gue suka Valorant`
+- `Sen hapus ingatan tentang Valorant`
+
+Hanya pesan yang benar-benar memicu respons yang melakukan retrieval memory. Pesan `IGNORE` dan `CONTEXT_ONLY` tidak membaca atau menulis database. Retrieval dibatasi maksimal lima memory dan 2.500 karakter.
 
 Personality Phase 2 aktif berada di:
 

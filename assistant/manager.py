@@ -1,6 +1,9 @@
 import asyncio
 import os
 import time
+from pathlib import Path
+
+import aiosqlite
 
 from assistant.conversation import (
     ConversationEntry,
@@ -16,6 +19,18 @@ from assistant.personality import PersonalityManager
 from assistant.response import AssistantResponse
 from assistant.settings import AISettings, load_settings
 from assistant.session import ChatSession, SessionManager
+from memory.context import build_identity_context
+from memory.extractor import (
+    ParsedMemoryResponse,
+    parse_explicit_memory_command,
+    parse_memory_response,
+    structured_response_instruction,
+)
+from memory.identity import OwnerResolver, UserIdentity, parse_owner_id
+from memory.manager import MemoryManager
+from memory.models import MemoryCandidate, MemoryRecord
+from memory.policy import MemoryPolicy
+from memory.store import MemoryStore
 from config import (
     AI_SETTINGS_FILE,
     LLM_PROVIDER,
@@ -39,12 +54,25 @@ class AssistantManager:
         sessions: SessionManager,
         llm: LLMManager,
         settings: AISettings,
+        owner_resolver: OwnerResolver,
+        memory: MemoryManager,
     ) -> None:
         self.personality: PersonalityManager = personality
         self.sessions: SessionManager = sessions
         self._llm: LLMManager = llm
         self.settings: AISettings = settings
+        self.owner_resolver: OwnerResolver = owner_resolver
+        self.memory: MemoryManager = memory
         self._llm_lock: asyncio.Lock = asyncio.Lock()
+
+    async def initialize(self) -> None:
+        try:
+            await self.memory.initialize()
+        except (OSError, RuntimeError, aiosqlite.Error) as error:
+            print(
+                f"[SENA MEMORY] initialization failed type={type(error).__name__} "
+                f"detail={error}; chat continues without long-term memory"
+            )
 
     async def chat(
         self,
@@ -69,11 +97,29 @@ class AssistantManager:
         )
         session: ChatSession = self.sessions.get(key)
         async with session.lock:
+            identity: UserIdentity = self.owner_resolver.resolve(user_id, clean_name)
+            memory_enabled: bool = identity.is_owner and source == "discord_text"
+            memories: list[MemoryRecord] = []
+            if memory_enabled:
+                try:
+                    memories = await self.memory.retrieve(identity, clean_text)
+                except (OSError, RuntimeError, aiosqlite.Error) as error:
+                    print(
+                        f"[SENA MEMORY] retrieval failed type={type(error).__name__} "
+                        f"detail={error}"
+                    )
+            identity_context: str = build_identity_context(identity, memories)
             system_prompt: str = (
                 f"{self.personality.load()}\nCurrent input source: {source}.\n"
                 "This is a multi-user Discord conversation. Treat each Discord "
-                "user ID as a distinct canonical identity and never confuse speakers."
+                "user ID as a distinct canonical identity and never confuse speakers.\n"
+                f"{identity_context}"
             )
+            explicit_candidate: MemoryCandidate | None = (
+                parse_explicit_memory_command(clean_text) if memory_enabled else None
+            )
+            if memory_enabled:
+                system_prompt += "\n" + structured_response_instruction()
             history_text: str = format_history(session.history)
             current_text: str = format_current_speaker(user_id, clean_name, clean_text)
             messages: list[ChatMessage] = [
@@ -83,7 +129,24 @@ class AssistantManager:
                 messages.append(ChatMessage(role="user", content=history_text))
             messages.append(ChatMessage(role="user", content=current_text))
             async with self._llm_lock:
-                response_text: str = await self._llm.chat(messages)
+                raw_response: str = await self._llm.chat(messages)
+            parsed_response: ParsedMemoryResponse = (
+                parse_memory_response(raw_response)
+                if memory_enabled
+                else ParsedMemoryResponse(raw_response.strip(), None)
+            )
+            response_text: str = parsed_response.text
+            candidate: MemoryCandidate | None = (
+                explicit_candidate or parsed_response.candidate
+            )
+            if candidate is not None:
+                try:
+                    await self.memory.apply_action(identity, candidate, source)
+                except (OSError, RuntimeError, LookupError, ValueError, aiosqlite.Error) as error:
+                    print(
+                        f"[SENA MEMORY] write failed action={candidate.action.value} "
+                        f"type={type(error).__name__} detail={error}"
+                    )
             timestamp: float = time.time()
             self.sessions.add_history(
                 session,
@@ -105,7 +168,7 @@ class AssistantManager:
                 ],
             )
             self.sessions.touch(session)
-            return AssistantResponse(text=response_text)
+            return AssistantResponse(text=response_text, memory_action=candidate)
 
     async def observe_message(
         self,
@@ -149,6 +212,10 @@ class AssistantManager:
     async def close(self) -> None:
         async with self._llm_lock:
             await self._llm.close()
+        try:
+            await self.memory.close()
+        except aiosqlite.Error as error:
+            print(f"[SENA MEMORY] close failed type={type(error).__name__} detail={error}")
         self.sessions.clear()
 
     async def apply_settings(self, settings: AISettings) -> None:
@@ -186,6 +253,11 @@ def build_assistant_manager() -> AssistantManager:
         ),
     )
     llm: LLMManager = build_llm_manager(settings)
+    raw_owner_id: str | None = os.getenv("SENA_OWNER_ID")
+    owner_id: int | None = parse_owner_id(raw_owner_id)
+    if owner_id is None:
+        reason: str = "missing" if raw_owner_id is None else "invalid"
+        print(f"[SENA MEMORY] owner disabled reason={reason} env=SENA_OWNER_ID")
     return AssistantManager(
         personality=PersonalityManager(SENA_PERSONALITY_FILE),
         sessions=SessionManager(
@@ -194,6 +266,17 @@ def build_assistant_manager() -> AssistantManager:
         ),
         llm=llm,
         settings=settings,
+        owner_resolver=OwnerResolver(owner_id),
+        memory=MemoryManager(
+            store=MemoryStore(Path("data/sena_memory.db")),
+            policy=MemoryPolicy(
+                importance_threshold=0.55,
+                confidence_threshold=0.70,
+                max_content_length=500,
+            ),
+            retrieval_limit=5,
+            context_max_chars=2500,
+        ),
     )
 
 

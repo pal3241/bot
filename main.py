@@ -58,6 +58,7 @@ async def run(token: str) -> None:
     intents.message_content = True
     client: discord.Client = discord.Client(intents=intents)
     assistant = build_assistant_manager()
+    await assistant.initialize()
     ctx: AppContext = AppContext(client=client, assistant=assistant)
     message_router: DiscordMessageRouter = DiscordMessageRouter(client, assistant)
 

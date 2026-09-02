@@ -9,6 +9,10 @@ from assistant.manager import AssistantManager
 from assistant.personality import PersonalityManager
 from assistant.session import SessionManager
 from assistant.settings import AISettings
+from memory.identity import OwnerResolver
+from memory.manager import MemoryManager
+from memory.policy import MemoryPolicy
+from memory.store import MemoryStore
 
 
 class RecordingProvider(LLMProvider):
@@ -47,6 +51,13 @@ class AssistantManagerTests(unittest.IsolatedAsyncioTestCase):
                 sessions=SessionManager(120.0, 24),
                 llm=LLMManager(provider, "test", "model"),
                 settings=settings(),
+                owner_resolver=OwnerResolver(None),
+                memory=MemoryManager(
+                    MemoryStore(Path(folder) / "memory.db"),
+                    MemoryPolicy(0.55, 0.70, 500),
+                    5,
+                    2500,
+                ),
             )
             key = build_conversation_key("discord_text", 1, 10, 100)
             manager.sessions.activate(key)
@@ -68,6 +79,13 @@ class AssistantManagerTests(unittest.IsolatedAsyncioTestCase):
                 sessions=SessionManager(120.0, 24),
                 llm=LLMManager(provider, "test", "model"),
                 settings=settings(),
+                owner_resolver=OwnerResolver(None),
+                memory=MemoryManager(
+                    MemoryStore(Path(folder) / "memory.db"),
+                    MemoryPolicy(0.55, 0.70, 500),
+                    5,
+                    2500,
+                ),
             )
             await manager.chat(100, "User1", 10, "halo", 1, "discord_text")
             await manager.chat(200, "User2", 10, "bilang dia stres", 1, "discord_text")
