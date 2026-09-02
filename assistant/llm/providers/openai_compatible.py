@@ -19,6 +19,7 @@ class OpenAICompatibleProvider(LLMProvider):
         endpoint: str,
         api_key: str,
         request_timeout_seconds: float,
+        max_tokens: int,
         retry_count: int,
         retry_delay_seconds: float,
         extra_headers: dict[str, str],
@@ -27,12 +28,15 @@ class OpenAICompatibleProvider(LLMProvider):
             raise LLMConfigurationError(
                 f"API key provider '{provider_name}' tidak tersedia di file .env."
             )
+        if max_tokens <= 0:
+            raise LLMConfigurationError("LLM_MAX_TOKENS harus lebih besar dari nol.")
         self._provider_name: str = provider_name
         self._endpoint: str = endpoint
         self._api_key: str = api_key
         self._timeout: aiohttp.ClientTimeout = aiohttp.ClientTimeout(
             total=request_timeout_seconds
         )
+        self._max_tokens: int = max_tokens
         self._retry_count: int = retry_count
         self._retry_delay_seconds: float = retry_delay_seconds
         self._extra_headers: dict[str, str] = dict(extra_headers)
@@ -83,6 +87,7 @@ class OpenAICompatibleProvider(LLMProvider):
                 {"role": message.role, "content": message.content} for message in messages
             ],
             "stream": False,
+            "max_tokens": self._max_tokens,
         }
         started: float = monotonic()
         print(f"[SENA] request started provider={self._provider_name} model={model}")

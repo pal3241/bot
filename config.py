@@ -25,6 +25,7 @@ OPENROUTER_MODEL: str = "openai/gpt-4o-mini"
 NVIDIA_NIM_MODEL: str = "meta/llama-3.1-8b-instruct"
 NVIDIA_NIM_BASE_URL: str = "https://integrate.api.nvidia.com/v1"
 LLM_REQUEST_TIMEOUT_SECONDS: float = 60.0
+LLM_MAX_TOKENS: int = 30
 LLM_RETRY_COUNT: int = 2
 LLM_RETRY_DELAY_SECONDS: float = 1.0
 SENA_CHAT_TIMEOUT_SECONDS: float = 120.0

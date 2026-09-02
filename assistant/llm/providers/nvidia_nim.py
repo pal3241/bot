@@ -7,6 +7,7 @@ class NvidiaNimProvider(OpenAICompatibleProvider):
         api_key: str,
         base_url: str,
         request_timeout_seconds: float,
+        max_tokens: int,
         retry_count: int,
         retry_delay_seconds: float,
     ) -> None:
@@ -15,6 +16,7 @@ class NvidiaNimProvider(OpenAICompatibleProvider):
             endpoint=f"{base_url.rstrip('/')}/chat/completions",
             api_key=api_key,
             request_timeout_seconds=request_timeout_seconds,
+            max_tokens=max_tokens,
             retry_count=retry_count,
             retry_delay_seconds=retry_delay_seconds,
             extra_headers={},

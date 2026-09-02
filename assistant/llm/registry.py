@@ -21,6 +21,7 @@ def create_provider(
     name: str,
     nvidia_base_url: str,
     request_timeout_seconds: float,
+    max_tokens: int,
     retry_count: int,
     retry_delay_seconds: float,
 ) -> LLMProvider:
@@ -28,6 +29,7 @@ def create_provider(
         "openrouter": lambda: OpenRouterProvider(
             api_key=require_environment("OPENROUTER_API_KEY"),
             request_timeout_seconds=request_timeout_seconds,
+            max_tokens=max_tokens,
             retry_count=retry_count,
             retry_delay_seconds=retry_delay_seconds,
         ),
@@ -35,6 +37,7 @@ def create_provider(
             api_key=require_environment("NVIDIA_NIM_API_KEY"),
             base_url=nvidia_base_url,
             request_timeout_seconds=request_timeout_seconds,
+            max_tokens=max_tokens,
             retry_count=retry_count,
             retry_delay_seconds=retry_delay_seconds,
         ),

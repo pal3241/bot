@@ -9,6 +9,7 @@ from assistant.response import AssistantResponse
 from assistant.session import SessionKey, SessionManager
 from config import (
     LLM_PROVIDER,
+    LLM_MAX_TOKENS,
     LLM_REQUEST_TIMEOUT_SECONDS,
     LLM_RETRY_COUNT,
     LLM_RETRY_DELAY_SECONDS,
@@ -88,6 +89,7 @@ def build_assistant_manager() -> AssistantManager:
         name=provider_name,
         nvidia_base_url=os.getenv("NVIDIA_NIM_BASE_URL", NVIDIA_NIM_BASE_URL),
         request_timeout_seconds=LLM_REQUEST_TIMEOUT_SECONDS,
+        max_tokens=LLM_MAX_TOKENS,
         retry_count=LLM_RETRY_COUNT,
         retry_delay_seconds=LLM_RETRY_DELAY_SECONDS,
     )
