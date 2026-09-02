@@ -132,6 +132,7 @@ class STTService:
             return
         response = await self._assistant.chat(
             user_id=result.user_id,
+            display_name=f"Discord user {result.user_id}",
             channel_id=result.voice_channel_id,
             text=route.prompt,
             guild_id=result.guild_id,

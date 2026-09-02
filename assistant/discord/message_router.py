@@ -2,14 +2,17 @@ import re
 
 import discord
 
+from assistant.conversation import ConversationKey, build_conversation_key
+from assistant.discord.message_classifier import (
+    MessageAction,
+    MessageDecision,
+    MessageFacts,
+    SessionCommand,
+    classify_message,
+)
 from assistant.llm.base import LLMProviderError
 from assistant.manager import AssistantManager
-from assistant.session import SessionKey, SessionState
-
-
-SILENCE_COMMANDS: frozenset[str] = frozenset(
-    {"diam", "tidur", "stop", "mute", "shut up", "sleep"}
-)
+from assistant.session import SessionState
 
 
 def remove_bot_mention(content: str, bot_id: int) -> str:
@@ -43,6 +46,22 @@ def split_message(text: str, limit: int) -> list[str]:
     return chunks
 
 
+async def resolve_reply_author_id(message: discord.Message) -> tuple[bool, int | None]:
+    reference: discord.MessageReference | None = message.reference
+    if reference is None or reference.message_id is None:
+        return False, None
+    resolved: discord.Message | discord.DeletedReferencedMessage | None = reference.resolved
+    if isinstance(resolved, discord.Message):
+        return True, resolved.author.id
+    try:
+        fetched: discord.Message = await message.channel.fetch_message(
+            reference.message_id
+        )
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        return True, None
+    return True, fetched.author.id
+
+
 class DiscordMessageRouter:
     def __init__(self, client: discord.Client, assistant: AssistantManager) -> None:
         self._client: discord.Client = client
@@ -69,25 +88,62 @@ class DiscordMessageRouter:
             raise RuntimeError("Discord router dipanggil sebelum identitas bot tersedia.")
         if message.author.bot:
             return
-        mentioned: bool = bot_user in message.mentions
         guild_id: int | None = message.guild.id if message.guild is not None else None
-        key = SessionKey(
-            guild_id=guild_id, channel_id=message.channel.id, user_id=message.author.id
+        key: ConversationKey = build_conversation_key(
+            source="discord_text",
+            guild_id=guild_id,
+            channel_id=message.channel.id,
+            user_id=message.author.id,
         )
-        clean_text: str = remove_bot_mention(message.content, bot_user.id)
-        if mentioned and clean_text.casefold() in SILENCE_COMMANDS:
+        session_state: SessionState = self._assistant.sessions.state(key)
+        mentioned: bool = bot_user in message.mentions
+        if mentioned:
+            is_reply: bool = message.reference is not None
+            reply_author_id: int | None = None
+        else:
+            is_reply, reply_author_id = await resolve_reply_author_id(message)
+        clean_content: str = remove_bot_mention(message.content, bot_user.id)
+        decision: MessageDecision = classify_message(
+            MessageFacts(
+                author_is_bot=message.author.bot,
+                mentioned_bot=mentioned,
+                is_reply=is_reply,
+                reply_resolved=not is_reply or reply_author_id is not None,
+                replied_to_bot=reply_author_id == bot_user.id,
+                content=clean_content,
+                session_state=session_state,
+            )
+        )
+        if decision.action is MessageAction.IGNORE:
+            return
+        if decision.action is MessageAction.CONTEXT_ONLY:
+            if decision.cleaned_text:
+                await self._assistant.observe_message(
+                    user_id=message.author.id,
+                    display_name=message.author.display_name,
+                    channel_id=message.channel.id,
+                    text=decision.cleaned_text,
+                    guild_id=guild_id,
+                    source="discord_text",
+                )
+            return
+        if decision.command is SessionCommand.SILENCE:
             self._assistant.sessions.silence(key)
             await self._reply(message, "oke, gue diem.")
             return
-        if mentioned:
+        if decision.command is SessionCommand.WAKE:
             self._assistant.sessions.activate(key)
-        elif self._assistant.sessions.state(key) is not SessionState.ACTIVE:
+            await self._reply(message, "iya, gue bangun.")
             return
-        prompt: str = clean_text if clean_text else "Respond briefly to being called."
+        if session_state is SessionState.SILENCED and decision.reason == "reply_to_bot":
+            return
+        self._assistant.sessions.activate(key)
+        prompt: str = decision.cleaned_text or "Respond briefly to being called."
         try:
             async with message.channel.typing():
                 response = await self._assistant.chat(
                     user_id=message.author.id,
+                    display_name=message.author.display_name,
                     channel_id=message.channel.id,
                     text=prompt,
                     guild_id=guild_id,

@@ -1,13 +1,21 @@
 import asyncio
 import os
+import time
 
+from assistant.conversation import (
+    ConversationEntry,
+    ConversationKey,
+    build_conversation_key,
+    format_current_speaker,
+    format_history,
+)
 from assistant.llm.base import ChatMessage
 from assistant.llm.manager import LLMManager
 from assistant.llm.registry import create_provider
 from assistant.personality import PersonalityManager
 from assistant.response import AssistantResponse
 from assistant.settings import AISettings, load_settings
-from assistant.session import SessionKey, SessionManager
+from assistant.session import ChatSession, SessionManager
 from config import (
     AI_SETTINGS_FILE,
     LLM_PROVIDER,
@@ -41,6 +49,7 @@ class AssistantManager:
     async def chat(
         self,
         user_id: int,
+        display_name: str,
         channel_id: int,
         text: str,
         guild_id: int | None,
@@ -49,28 +58,93 @@ class AssistantManager:
         clean_text: str = text.strip()
         if not clean_text:
             raise ValueError("Teks untuk AssistantManager tidak boleh kosong.")
-        key = SessionKey(guild_id=guild_id, channel_id=channel_id, user_id=user_id)
-        session = self.sessions.get(key)
+        clean_name: str = display_name.strip()
+        if not clean_name:
+            raise ValueError("Display name untuk AssistantManager tidak boleh kosong.")
+        key: ConversationKey = build_conversation_key(
+            source=source,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            user_id=user_id,
+        )
+        session: ChatSession = self.sessions.get(key)
         async with session.lock:
             system_prompt: str = (
-                f"{self.personality.load()}\nCurrent input source: {source}."
+                f"{self.personality.load()}\nCurrent input source: {source}.\n"
+                "This is a multi-user Discord conversation. Treat each Discord "
+                "user ID as a distinct canonical identity and never confuse speakers."
             )
+            history_text: str = format_history(session.history)
+            current_text: str = format_current_speaker(user_id, clean_name, clean_text)
             messages: list[ChatMessage] = [
                 ChatMessage(role="system", content=system_prompt),
-                *session.history,
-                ChatMessage(role="user", content=clean_text),
             ]
+            if history_text:
+                messages.append(ChatMessage(role="user", content=history_text))
+            messages.append(ChatMessage(role="user", content=current_text))
             async with self._llm_lock:
                 response_text: str = await self._llm.chat(messages)
+            timestamp: float = time.time()
             self.sessions.add_history(
                 session,
                 [
-                    ChatMessage(role="user", content=clean_text),
-                    ChatMessage(role="assistant", content=response_text),
+                    ConversationEntry(
+                        role="user",
+                        content=clean_text,
+                        user_id=user_id,
+                        display_name=clean_name,
+                        timestamp=timestamp,
+                    ),
+                    ConversationEntry(
+                        role="assistant",
+                        content=response_text,
+                        user_id=None,
+                        display_name="Sena",
+                        timestamp=timestamp,
+                    ),
                 ],
             )
             self.sessions.touch(session)
             return AssistantResponse(text=response_text)
+
+    async def observe_message(
+        self,
+        user_id: int,
+        display_name: str,
+        channel_id: int,
+        text: str,
+        guild_id: int | None,
+        source: str,
+    ) -> None:
+        clean_text: str = text.strip()
+        clean_name: str = display_name.strip()
+        if not clean_text:
+            raise ValueError("Teks observasi AssistantManager tidak boleh kosong.")
+        if not clean_name:
+            raise ValueError("Display name observasi tidak boleh kosong.")
+        key: ConversationKey = build_conversation_key(
+            source=source,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            user_id=user_id,
+        )
+        session: ChatSession | None = self.sessions.peek(key)
+        if session is None:
+            raise RuntimeError("Session tidak aktif saat menerima context-only message.")
+        async with session.lock:
+            self.sessions.add_history(
+                session,
+                [
+                    ConversationEntry(
+                        role="user",
+                        content=clean_text,
+                        user_id=user_id,
+                        display_name=clean_name,
+                        timestamp=time.time(),
+                    )
+                ],
+            )
+            self.sessions.touch(session)
 
     async def close(self) -> None:
         async with self._llm_lock:

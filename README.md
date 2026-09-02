@@ -136,11 +136,13 @@ Pesan lebih dari 2.000 karakter otomatis dipecah. Ketik `exit` untuk menghentika
 
 ## Sena AI text chat
 
-Sena tidak membalas seluruh channel secara otomatis. Setiap percakapan terpisah berdasarkan server, channel, dan user.
+Sena tidak membalas seluruh channel secara otomatis. Discord text memakai short-term context bersama per server dan channel, tetapi identitas setiap pembicara tetap dibedakan memakai Discord user ID. Voice tetap memakai session per user.
 
-1. Mention bot, misalnya `@Sena hey`, untuk mengaktifkan sesi.
-2. Lanjutkan chat biasa tanpa mention selama sesi masih aktif.
-3. Gunakan `@Sena diam`, `@Sena tidur`, `@Sena stop`, `@Sena mute`, `@Sena shut up`, atau `@Sena sleep` untuk membisukan sesi.
+1. Mention bot, balas pesan Sena, atau panggil `Sen`/`Sena` di awal pesan untuk mengaktifkan sesi channel.
+2. Pesan biasa selama sesi aktif hanya masuk recent context dan tidak otomatis dibalas.
+3. Balasan antar-user tanpa mention Sena diabaikan sepenuhnya.
+4. Gunakan `@Sena diam`, `@Sena tidur`, `@Sena stop`, `@Sena mute`, `@Sena shut up`, atau `@Sena sleep` untuk membisukan sesi.
+5. Gunakan `Sen bangun` atau `@Sena bangun` untuk mengaktifkan kembali sesi.
 4. Mention bot lagi untuk mengaktifkannya kembali.
 
 Sesi ACTIVE kembali menjadi INACTIVE setelah 120 detik tanpa aktivitas. History hanya disimpan di RAM, dibatasi 20 message, dan dihapus saat sesi timeout, dibisukan, atau bot ditutup.
