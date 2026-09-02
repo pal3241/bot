@@ -23,6 +23,7 @@ class OpenAICompatibleProvider(LLMProvider):
         retry_count: int,
         retry_delay_seconds: float,
         extra_headers: dict[str, str],
+        extra_body: dict[str, object],
     ) -> None:
         if not api_key.strip():
             raise LLMConfigurationError(
@@ -40,6 +41,7 @@ class OpenAICompatibleProvider(LLMProvider):
         self._retry_count: int = retry_count
         self._retry_delay_seconds: float = retry_delay_seconds
         self._extra_headers: dict[str, str] = dict(extra_headers)
+        self._extra_body: dict[str, object] = dict(extra_body)
         self._session: aiohttp.ClientSession | None = None
 
     async def _get_session(self) -> aiohttp.ClientSession:
@@ -88,6 +90,7 @@ class OpenAICompatibleProvider(LLMProvider):
             ],
             "stream": False,
             "max_tokens": self._max_tokens,
+            **self._extra_body,
         }
         started: float = monotonic()
         print(f"[SENA] request started provider={self._provider_name} model={model}")

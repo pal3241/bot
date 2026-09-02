@@ -20,4 +20,5 @@ class NvidiaNimProvider(OpenAICompatibleProvider):
             retry_count=retry_count,
             retry_delay_seconds=retry_delay_seconds,
             extra_headers={},
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )

@@ -19,4 +19,5 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             retry_count=retry_count,
             retry_delay_seconds=retry_delay_seconds,
             extra_headers={"X-Title": "Sena Discord Assistant"},
+            extra_body={},
         )
