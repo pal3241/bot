@@ -124,9 +124,15 @@ class VoiceManager:
         try:
             if self.converter_settings.enabled:
                 rvc_started: float = time.perf_counter()
-                playback_file = await self.converter.convert(audio_file)
-                rvc_elapsed = time.perf_counter() - rvc_started
-                original_file = audio_file
+                try:
+                    playback_file = await self.converter.convert(audio_file)
+                    rvc_elapsed = time.perf_counter() - rvc_started
+                    original_file = audio_file
+                except (OSError, RuntimeError, ValueError) as error:
+                    print(
+                        "[VOICE] converter gagal, output memakai passthrough "
+                        f"type={type(error).__name__} detail={error}"
+                    )
             total_elapsed: float = time.perf_counter() - total_started
             print(
                 "[VOICE PERF] "

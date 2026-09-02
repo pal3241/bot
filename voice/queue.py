@@ -108,6 +108,25 @@ class TTSQueue:
                 f"Worker TTS queue berhenti: {self.fatal_error}"
             ) from self.fatal_error
 
+    async def clear_pending(self) -> int:
+        removed: int = 0
+        while not self.text_queue.empty():
+            item: TTSQueueItem | None = self.text_queue.get_nowait()
+            self.text_queue.task_done()
+            if item is not None:
+                removed += 1
+        while not self.ready_queue.empty():
+            ready: ReadyQueueItem | None = self.ready_queue.get_nowait()
+            self.ready_queue.task_done()
+            if ready is not None:
+                await self.manager.cleanup_prepared(ready.prepared)
+                removed += 1
+        return removed
+
+    @property
+    def pending_count(self) -> int:
+        return self.text_queue.qsize() + self.ready_queue.qsize()
+
     async def _prepare(self) -> None:
         try:
             while True:

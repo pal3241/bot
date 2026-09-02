@@ -4,7 +4,7 @@ Bot Discord berbasis terminal dengan fitur berikut:
 
 - Emoji Manager untuk upload, melihat, dan menghapus emoji.
 - Terminal Chat dua arah antara terminal dan channel Discord.
-- Voice TTS Queue untuk membacakan teks di voice channel.
+- Voice System untuk Terminal TTS, Voice Changer, dan STT percakapan.
 - Fondasi Voice Converter modular untuk RVC/w-okada.
 - Model Manager untuk mengimpor dan mengelola model RVC.
 - Sena AI text chat dengan personality, history singkat, dan dukungan multilingual.
@@ -90,7 +90,7 @@ Setelah tersambung, menu berikut akan ditampilkan:
 ```text
 1. Emoji Manager
 2. Terminal Chat
-3. Voice TTS
+3. Voice
 4. AI Settings
 ```
 
@@ -153,13 +153,13 @@ config/personality.json
 
 File JSON tersebut mengatur identity, tone, energy, humor, friendliness, formality, panjang respons, penggunaan emoji, bahasa, trait level 0–10, helping style, roughness rules, adaptasi konteks, dan behavior percakapan. Bagian `speech` menyimpan preferred expressions serta contoh praise/correction untuk integrasi respons lanjutan. Nilainya dapat diedit melalui **AI Settings > Personality Settings** atau langsung di file lalu memilih **Reload personality**. Nilai tidak dikenal menggunakan default yang aman tanpa mematikan bot. Kebijakan bahasa default adalah `auto`, sehingga Sena mengikuti bahasa pesan terbaru secara natural.
 
-## Voice TTS Queue
+## Voice System dan Terminal TTS Queue
 
-1. Pilih **Voice TTS**.
+1. Pilih **Voice**.
 2. Pilih server.
 3. Pilih voice channel.
 4. Pilih **Join VC**.
-5. Pilih **Terminal TTS Queue**.
+5. Pilih **Terminal TTS** lalu **Kirim TTS / Queue**.
 6. Ketik teks yang ingin diucapkan bot.
 
 Contoh:
@@ -173,6 +173,27 @@ VOICE [1] > selesai
 ```
 
 Anda dapat terus menambahkan teks saat bot berbicara. Audio diproses satu per satu. Ketik `exit` untuk menunggu antrean selesai dan kembali.
+Ketik `status` untuk melihat jumlah antrean atau `clear` untuk menghapus audio yang belum diputar.
+
+## Speech-to-Text Discord VC
+
+Voice System dapat menerima audio setiap user secara terpisah menggunakan `discord-ext-voice-recv`, memotong utterance dengan VAD, lalu mentranskripsikannya menggunakan Faster Whisper.
+
+1. Buka **Voice > Connect / Change VC**.
+2. Buka **Voice > STT**.
+3. Aktifkan **STT ON/OFF**.
+4. Tunggu model Faster Whisper selesai diunduh saat transkripsi pertama.
+5. Ucapkan `Sen`, `Sena`, atau wake alias lain diikuti pertanyaan.
+
+Setelah session ACTIVE, percakapan dapat dilanjutkan tanpa wake word selama timeout belum tercapai. Ucapkan `Sen diam` untuk membuat session user menjadi SILENCED, lalu panggil Sena lagi untuk mengaktifkannya.
+
+Mode yang tersedia:
+
+- `wake_word`: mode default; hanya percakapan yang dibangunkan yang masuk AI.
+- `always_active`: semua utterance masuk AI, cocok untuk VC privat.
+- `test_only`: transcript hanya ditampilkan di terminal.
+
+Pengaturan STT disimpan di `data/stt_settings.json`. Audio diproses di RAM dan tidak disimpan. Model default adalah `small` pada CPU `int8`; model dapat diganti dari menu STT. Gunakan **Test STT satu utterance** untuk memeriksa receiver dan transkripsi tanpa mengirim hasil ke AI.
 
 TTS Queue menggunakan dua tahap terpisah:
 
@@ -265,7 +286,7 @@ File `.index` bersifat opsional. Setiap folder model harus memiliki tepat satu f
 
 ### Import model ZIP
 
-1. Buka **Voice TTS > Model Manager**.
+1. Buka **Voice > Voice Changer > Model Manager**.
 2. Pilih **Import model**.
 3. Masukkan path lengkap file `.zip`.
 4. Masukkan nama model.
@@ -300,13 +321,13 @@ Pitch adalah bagian dari Voice Converter, bukan fitur gTTS. Pengaturan ini baru 
 
 ### Penyimpanan pengaturan
 
-Pengaturan Voice TTS otomatis disimpan ke:
+Pengaturan voice output otomatis disimpan ke:
 
 ```text
 data/voice_settings.json
 ```
 
-Nilai berikut dipulihkan ketika menu Voice TTS dibuka kembali atau bot direstart:
+Nilai berikut dipulihkan ketika menu Voice dibuka kembali atau bot direstart:
 
 - TTS engine.
 - Bahasa.

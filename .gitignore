@@ -7,3 +7,4 @@ models/rvc/*
 !models/rvc/.gitkeep
 data/voice_settings.json
 data/ai_settings.json
+data/stt_settings.json
