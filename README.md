@@ -56,7 +56,7 @@ NVIDIA_NIM_BASE_URL=https://integrate.api.nvidia.com/v1
 
 Hanya API key provider aktif yang wajib tersedia. Model dan provider dapat diganti melalui `.env` tanpa mengubah Assistant Core. Bot memvalidasi personality, provider, model, dan API key sebelum login ke Discord.
 
-Panjang output AI dibatasi maksimal 30 token melalui `LLM_MAX_TOKENS` di `config.py`.
+Panjang output AI dibatasi maksimal 300 token melalui `LLM_MAX_TOKENS` di `config.py`.
 Untuk NVIDIA Nemotron, thinking dinonaktifkan pada request agar batas tersebut dipakai untuk jawaban final dan bukan reasoning internal.
 
 Jangan membagikan atau memasukkan `.env` ke Git.

@@ -71,6 +71,12 @@ class OpenAICompatibleProvider(LLMProvider):
                 f"{self._provider_name} tidak mengembalikan message yang valid: status={status}, body={body[:1000]}"
             )
         content: object = message.get("content")
+        finish_reason: object = choices[0].get("finish_reason")
+        if finish_reason == "length":
+            raise LLMProviderError(
+                f"{self._provider_name} memotong response karena batas max_tokens="
+                f"{self._max_tokens}. Naikkan nilai maks token melalui AI Settings."
+            )
         if not isinstance(content, str) or not content.strip():
             raise LLMProviderError(
                 f"{self._provider_name} mengembalikan response AI kosong: status={status}, body={body[:1000]}"
