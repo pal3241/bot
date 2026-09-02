@@ -7,6 +7,8 @@ from dotenv import load_dotenv
 import features.emoji
 import features.chat
 import features.voice
+from assistant import build_assistant_manager
+from assistant.discord import DiscordMessageRouter
 from core.context import AppContext
 from core.io import ainput
 from core.registry import FEATURES, Feature
@@ -55,9 +57,12 @@ async def run(token: str) -> None:
     intents.message_content = True
     client: discord.Client = discord.Client(intents=intents)
     ctx: AppContext = AppContext(client=client)
+    assistant = build_assistant_manager()
+    message_router: DiscordMessageRouter = DiscordMessageRouter(client, assistant)
 
     async def on_message(message: discord.Message) -> None:
         await tampilkan_pesan_discord(message, ctx)
+        await message_router.handle(message)
 
     client.event(on_message)
     await client.login(token)
@@ -75,6 +80,7 @@ async def run(token: str) -> None:
         print(f"Servers : {len(client.guilds)}")
         await main_menu(ctx)
     finally:
+        await assistant.close()
         if not client.is_closed():
             await client.close()
         await discord_task

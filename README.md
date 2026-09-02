@@ -7,6 +7,7 @@ Bot Discord berbasis terminal dengan fitur berikut:
 - Voice TTS Queue untuk membacakan teks di voice channel.
 - Fondasi Voice Converter modular untuk RVC/w-okada.
 - Model Manager untuk mengimpor dan mengelola model RVC.
+- Sena AI text chat dengan personality, history singkat, dan dukungan multilingual.
 
 ## Persyaratan
 
@@ -39,7 +40,21 @@ Buat atau perbarui file `.env`:
 
 ```env
 TOKEN=TOKEN_BOT_DISCORD
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=API_KEY_OPENROUTER
+OPENROUTER_MODEL=openai/gpt-4o-mini
 ```
+
+Untuk memakai NVIDIA NIM, ganti konfigurasi provider:
+
+```env
+LLM_PROVIDER=nvidia_nim
+NVIDIA_NIM_API_KEY=API_KEY_NVIDIA_NIM
+NVIDIA_NIM_MODEL=meta/llama-3.1-8b-instruct
+NVIDIA_NIM_BASE_URL=https://integrate.api.nvidia.com/v1
+```
+
+Hanya API key provider aktif yang wajib tersedia. Model dan provider dapat diganti melalui `.env` tanpa mengubah Assistant Core. Bot memvalidasi personality, provider, model, dan API key sebelum login ke Discord.
 
 Jangan membagikan atau memasukkan `.env` ke Git.
 
@@ -112,6 +127,25 @@ You >
 ```
 
 Pesan lebih dari 2.000 karakter otomatis dipecah. Ketik `exit` untuk menghentikan sesi chat.
+
+## Sena AI text chat
+
+Sena tidak membalas seluruh channel secara otomatis. Setiap percakapan terpisah berdasarkan server, channel, dan user.
+
+1. Mention bot, misalnya `@Sena hey`, untuk mengaktifkan sesi.
+2. Lanjutkan chat biasa tanpa mention selama sesi masih aktif.
+3. Gunakan `@Sena diam`, `@Sena tidur`, `@Sena stop`, `@Sena mute`, `@Sena shut up`, atau `@Sena sleep` untuk membisukan sesi.
+4. Mention bot lagi untuk mengaktifkannya kembali.
+
+Sesi ACTIVE kembali menjadi INACTIVE setelah 120 detik tanpa aktivitas. History hanya disimpan di RAM, dibatasi 20 message, dan dihapus saat sesi timeout, dibisukan, atau bot ditutup.
+
+Personality aktif berada di:
+
+```text
+data/personality.txt
+```
+
+Edit file tersebut untuk mengubah gaya Sena. `PersonalityManager.reload()` tersedia untuk integrasi reload saat runtime; restart bot juga memuat versi file terbaru. Kebijakan bahasa default adalah `auto`, sehingga Sena mengikuti bahasa pesan terbaru secara natural.
 
 ## Voice TTS Queue
 
