@@ -4,6 +4,7 @@ aiohttp>=3.13,<4
 gTTS>=2.5,<3
 python-dotenv>=1.1,<2
 aiosqlite>=0.21,<1
+flet>=0.80,<2
 
 # Native Discord voice dependencies. Android/Termux menjalankan degraded mode
 # dan melewati dependency ini supaya kegagalan voice tidak memblokir bot utama.
