@@ -41,12 +41,34 @@ def format_entry(entry: ConversationEntry) -> str:
     return f"[{identity}]\n{entry.content}"
 
 
-def format_history(entries: list[ConversationEntry]) -> str:
+def format_history(
+    entries: list[ConversationEntry],
+    max_chars: int | None = None,
+) -> str:
     if not entries:
         return ""
-    return "[Recent channel conversation]\n\n" + "\n\n".join(
-        format_entry(entry) for entry in entries
-    )
+    if max_chars is not None and max_chars <= 0:
+        raise ValueError("max_chars history harus lebih besar dari nol.")
+
+    formatted: list[str] = [format_entry(entry) for entry in entries]
+    if max_chars is not None:
+        selected_reversed: list[str] = []
+        used: int = 0
+        for block in reversed(formatted):
+            cost: int = len(block) + (2 if selected_reversed else 0)
+            if selected_reversed and used + cost > max_chars:
+                break
+            if not selected_reversed and len(block) > max_chars:
+                # Keep the newest message tail instead of sending an oversized prompt.
+                block = block[-max_chars:]
+                cost = len(block)
+            selected_reversed.append(block)
+            used += cost
+        formatted = list(reversed(selected_reversed))
+
+    if not formatted:
+        return ""
+    return "[Recent channel conversation]\n\n" + "\n\n".join(formatted)
 
 
 def format_current_speaker(user_id: int, display_name: str, text: str) -> str:
