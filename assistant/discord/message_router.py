@@ -1,4 +1,5 @@
 import re
+from time import monotonic
 
 import discord
 
@@ -132,6 +133,7 @@ class DiscordMessageRouter:
             return
         self._assistant.sessions.activate(key)
         prompt: str = decision.cleaned_text or "Respond briefly to being called."
+        started: float = monotonic()
         try:
             async with message.channel.typing():
                 response = await self._assistant.chat(
@@ -142,8 +144,16 @@ class DiscordMessageRouter:
                     guild_id=guild_id,
                     source="discord_text",
                 )
+            assistant_done: float = monotonic()
             await self._reply(
                 message, response.text, response.expression, is_owner, key
+            )
+            finished: float = monotonic()
+            print(
+                f"[SENA PERF] discord channel={message.channel.id} "
+                f"assistant={assistant_done - started:.3f}s "
+                f"send={finished - assistant_done:.3f}s "
+                f"end_to_end={finished - started:.3f}s"
             )
         except LLMProviderError as error:
             print(f"[SENA] provider error type={type(error).__name__} detail={error}")
