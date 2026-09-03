@@ -76,6 +76,20 @@ def _build_router_safely(client: discord.Client, assistant: Any | None) -> tuple
     return router, expression_service, action_executor
 
 
+def _build_flet_ui_safely(ctx: AppContext, device: DeviceInfo, feature_results: dict[str, FeatureLoadResult]) -> Any | None:
+    if os.getenv("SENA_UI", "flet").strip().casefold() == "terminal":
+        print("[SUBSYSTEM] Flet UI: SKIPPED (SENA_UI=terminal)")
+        return None
+    try:
+        from ui import SenaFletUI
+        ui = SenaFletUI(ctx, device, feature_results)
+    except Exception as error:
+        print(f"[SUBSYSTEM] Flet UI: DISABLED ({type(error).__name__}: {error})")
+        return None
+    print(f"[SUBSYSTEM] Flet UI: ENABLED mode={'web' if device.is_android else 'desktop'}")
+    return ui
+
+
 async def run(token: str) -> None:
     device = detect_device(); print("\n" + "=" * 60); print("SENNA SAFE STARTUP"); print("=" * 60); print(f"[DEVICE] {format_device_summary(device)}"); print("[STARTUP] Memuat fitur satu per satu; kegagalan diisolasi.\n")
     feature_results = load_features(device)
@@ -84,8 +98,13 @@ async def run(token: str) -> None:
     assistant = await _build_assistant_safely(); ctx = AppContext(client=client, assistant=assistant, device=device)
     message_display = _load_message_display(feature_results)
     message_router, expression_service, _action_executor = _build_router_safely(client, assistant)
+    flet_ui: Any | None = None
 
     async def on_message(message: discord.Message) -> None:
+        if flet_ui is not None:
+            try: await flet_ui.notify_discord_message(message)
+            except asyncio.CancelledError: raise
+            except Exception as error: print(f"[SENA UI] Discord message bridge gagal: {type(error).__name__}: {error}")
         if message_display is not None:
             try: await message_display(message, ctx)
             except asyncio.CancelledError: raise
@@ -104,7 +123,19 @@ async def run(token: str) -> None:
             except Exception as error: print(f"[SUBSYSTEM] Expression runtime refresh gagal: {type(error).__name__}: {error}; text bot tetap berjalan")
         print("\n" + "=" * 60); print("BOT ONLINE - DEGRADED MODE SUPPORTED"); print("=" * 60)
         print(f"Bot      : {client.user}"); print(f"Bot ID   : {client.user.id}"); print(f"Servers  : {len(client.guilds)}"); print(f"Device   : {device.kind.value} ({device.machine})"); print(f"Features : {feature_health_summary(feature_results)}"); print(f"AI       : {'enabled' if assistant is not None else 'disabled'}")
-        await main_menu(ctx, device, feature_results)
+
+        flet_ui = _build_flet_ui_safely(ctx, device, feature_results)
+        if flet_ui is not None:
+            try:
+                await flet_ui.run()
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                print(f"[SUBSYSTEM] Flet UI runtime gagal: {type(error).__name__}: {error}")
+                print("[SUBSYSTEM] Beralih ke terminal fallback.")
+                await main_menu(ctx, device, feature_results)
+        else:
+            await main_menu(ctx, device, feature_results)
     finally:
         if assistant is not None:
             try: await assistant.close()
