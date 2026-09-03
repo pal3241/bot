@@ -2,7 +2,11 @@ import json
 import re
 from dataclasses import dataclass
 
-from core.structured_response import parse_json_object, strip_json_fence
+from core.structured_response import (
+    parse_json_object,
+    sanitize_visible_text,
+    strip_json_fence,
+)
 from memory.models import MEMORY_CATEGORIES, MemoryActionType, MemoryCandidate
 
 
@@ -75,19 +79,19 @@ def parse_memory_response(raw: str) -> ParsedMemoryResponse:
     parsed: dict[str, object] | None = parse_json_object(cleaned)
     if parsed is None:
         recovered: str | None = _recover_text(cleaned)
-        return ParsedMemoryResponse(recovered or cleaned, None)
-    if not isinstance(parsed, dict):
-        return ParsedMemoryResponse(cleaned, None)
+        visible: str = sanitize_visible_text(recovered or cleaned)
+        return ParsedMemoryResponse(visible or "...", None)
     text_value: object = parsed.get("text")
     text: str = text_value.strip() if isinstance(text_value, str) else ""
     if not text:
-        return ParsedMemoryResponse(cleaned, None)
+        visible: str = sanitize_visible_text(cleaned)
+        return ParsedMemoryResponse(visible or "...", None)
     try:
         candidate: MemoryCandidate | None = parse_candidate(parsed.get("memory"))
     except ValueError as error:
         print(f"[SENA MEMORY] candidate rejected detail={error}")
         candidate = None
-    return ParsedMemoryResponse(text, candidate)
+    return ParsedMemoryResponse(sanitize_visible_text(text) or "...", candidate)
 
 
 def infer_category(content: str) -> str:
