@@ -70,11 +70,15 @@ def expression_response_instruction() -> str:
     emotions: str = "|".join(item.value for item in Emotion)
     intents: str = "|".join(item.value for item in ExpressionIntent)
     return (
-        "[EXPRESSION OUTPUT]\nReturn exactly one JSON object with keys text, memory, "
-        "and expression. Every reply requires expression metadata with emotion, intent, "
-        "intensity from 0.0 to 1.0, bonus_media from none|auto|sticker|gif, and "
-        "allow_bonus. Allowed emotions: "
-        f"{emotions}. Allowed intents: {intents}. Do not put emoji characters, Discord "
-        "emoji syntax, IDs, asset names, GIF URLs, or local paths in text. The application "
-        "chooses all media."
+        "[EXPRESSION OUTPUT - MACHINE PROTOCOL]\n"
+        "Return exactly ONE JSON object and nothing before or after it. The only top-level "
+        "keys are text, memory, and expression. Never narrate, explain, summarize, or print "
+        "expression metadata in prose. In particular, never output lines such as "
+        "'Expression: emotion=..., intent=..., intensity=...' or 'Memory: ...'. "
+        "Every reply requires expression metadata with emotion, intent, intensity from "
+        "0.0 to 1.0, bonus_media from none|auto|sticker|gif, and allow_bonus. Allowed "
+        f"emotions: {emotions}. Allowed intents: {intents}. The text field is the only "
+        "user-visible language. Do not put emoji characters, Discord emoji syntax, IDs, "
+        "asset names, GIF URLs, local paths, or any protocol metadata inside text. The "
+        "application chooses and renders all media."
     )
