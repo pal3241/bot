@@ -1,6 +1,8 @@
 import asyncio
 import os
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import aiosqlite
@@ -19,6 +21,7 @@ from assistant.personality import PersonalityManager
 from assistant.response import AssistantResponse
 from assistant.settings import AISettings, load_settings
 from assistant.session import ChatSession, SessionManager
+from core.device import detect_device
 from expression.parser import expression_response_instruction, parse_expression_response
 from memory.context import build_identity_context, enforce_owner_addressing
 from memory.extractor import (
@@ -48,6 +51,21 @@ from config import (
 )
 
 
+def _positive_int_env(name: str, fallback: int) -> int:
+    raw: str | None = os.getenv(name)
+    if raw is None or not raw.strip():
+        return fallback
+    try:
+        value: int = int(raw)
+    except ValueError:
+        print(f"[SENA PERF] invalid {name}={raw!r}; fallback={fallback}")
+        return fallback
+    if value <= 0:
+        print(f"[SENA PERF] invalid {name}={raw!r}; fallback={fallback}")
+        return fallback
+    return value
+
+
 class AssistantManager:
     def __init__(
         self,
@@ -64,7 +82,35 @@ class AssistantManager:
         self.settings: AISettings = settings
         self.owner_resolver: OwnerResolver = owner_resolver
         self.memory: MemoryManager = memory
-        self._llm_lock: asyncio.Lock = asyncio.Lock()
+
+        device = detect_device()
+        default_concurrency: int = 2 if device.is_android else 4
+        default_history_chars: int = 4000 if device.is_android else 8000
+        self._llm_concurrency: int = _positive_int_env(
+            "SENA_LLM_CONCURRENCY", default_concurrency
+        )
+        self._history_context_max_chars: int = _positive_int_env(
+            "SENA_HISTORY_CONTEXT_MAX_CHARS", default_history_chars
+        )
+        self._llm_slots: asyncio.Semaphore = asyncio.Semaphore(self._llm_concurrency)
+        print(
+            f"[SENA PERF] llm_concurrency={self._llm_concurrency} "
+            f"history_context_max_chars={self._history_context_max_chars}"
+        )
+
+    @asynccontextmanager
+    async def _exclusive_llm_access(self) -> AsyncIterator[None]:
+        """Wait for active LLM calls before swapping/closing the provider."""
+
+        acquired: int = 0
+        try:
+            for _ in range(self._llm_concurrency):
+                await self._llm_slots.acquire()
+                acquired += 1
+            yield
+        finally:
+            for _ in range(acquired):
+                self._llm_slots.release()
 
     async def initialize(self) -> None:
         try:
@@ -84,6 +130,7 @@ class AssistantManager:
         guild_id: int | None,
         source: str,
     ) -> AssistantResponse:
+        total_started: float = time.monotonic()
         clean_text: str = text.strip()
         if not clean_text:
             raise ValueError("Teks untuk AssistantManager tidak boleh kosong.")
@@ -101,6 +148,8 @@ class AssistantManager:
             identity: UserIdentity = self.owner_resolver.resolve(user_id, clean_name)
             memory_enabled: bool = identity.is_owner and source == "discord_text"
             memories: list[MemoryRecord] = []
+
+            memory_started: float = time.monotonic()
             if memory_enabled:
                 try:
                     memories = await self.memory.retrieve(identity, clean_text)
@@ -109,6 +158,8 @@ class AssistantManager:
                         f"[SENA MEMORY] retrieval failed type={type(error).__name__} "
                         f"detail={error}"
                     )
+            memory_seconds: float = time.monotonic() - memory_started
+
             identity_context: str = build_identity_context(identity, memories)
             system_prompt: str = (
                 f"{self.personality.load()}\nCurrent input source: {source}.\n"
@@ -128,7 +179,11 @@ class AssistantManager:
             else:
                 system_prompt += "\nSet the structured response memory field to null."
             system_prompt += "\n" + expression_response_instruction()
-            history_text: str = format_history(session.history)
+
+            history_text: str = format_history(
+                session.history,
+                max_chars=self._history_context_max_chars,
+            )
             current_text: str = format_current_speaker(user_id, clean_name, clean_text)
             messages: list[ChatMessage] = [
                 ChatMessage(role="system", content=system_prompt),
@@ -136,8 +191,15 @@ class AssistantManager:
             if history_text:
                 messages.append(ChatMessage(role="user", content=history_text))
             messages.append(ChatMessage(role="user", content=current_text))
-            async with self._llm_lock:
+
+            prompt_chars: int = sum(len(message.content) for message in messages)
+            queue_started: float = time.monotonic()
+            async with self._llm_slots:
+                queue_seconds: float = time.monotonic() - queue_started
+                llm_started: float = time.monotonic()
                 raw_response: str = await self._llm.chat(messages)
+                llm_seconds: float = time.monotonic() - llm_started
+
             parsed_response: ParsedMemoryResponse = parse_memory_response(raw_response)
             response_text: str = enforce_owner_addressing(parsed_response.text, identity)
             candidate: MemoryCandidate | None = (
@@ -152,6 +214,7 @@ class AssistantManager:
                         f"[SENA MEMORY] write failed action={candidate.action.value} "
                         f"type={type(error).__name__} detail={error}"
                     )
+
             timestamp: float = time.time()
             self.sessions.add_history(
                 session,
@@ -173,6 +236,12 @@ class AssistantManager:
                 ],
             )
             self.sessions.touch(session)
+            total_seconds: float = time.monotonic() - total_started
+            print(
+                f"[SENA PERF] channel={channel_id} prompt_chars={prompt_chars} "
+                f"memory={memory_seconds:.3f}s queue={queue_seconds:.3f}s "
+                f"llm={llm_seconds:.3f}s total={total_seconds:.3f}s"
+            )
             return AssistantResponse(
                 text=response_text,
                 memory_action=candidate,
@@ -219,7 +288,7 @@ class AssistantManager:
             self.sessions.touch(session)
 
     async def close(self) -> None:
-        async with self._llm_lock:
+        async with self._exclusive_llm_access():
             await self._llm.close()
         try:
             await self.memory.close()
@@ -233,7 +302,7 @@ class AssistantManager:
             timeout_seconds=settings.chat_timeout_seconds,
             history_max_messages=settings.history_max_messages,
         )
-        async with self._llm_lock:
+        async with self._exclusive_llm_access():
             previous_llm: LLMManager = self._llm
             previous_sessions: SessionManager = self.sessions
             self._llm = replacement_llm
@@ -267,6 +336,11 @@ def build_assistant_manager() -> AssistantManager:
     if owner_id is None:
         reason: str = "missing" if raw_owner_id is None else "invalid"
         print(f"[SENA MEMORY] owner disabled reason={reason} env=SENA_OWNER_ID")
+
+    device = detect_device()
+    memory_retrieval_limit: int = 3 if device.is_android else 5
+    memory_context_max_chars: int = 1600 if device.is_android else 2500
+
     return AssistantManager(
         personality=PersonalityManager(SENA_PERSONALITY_FILE),
         sessions=SessionManager(
@@ -283,8 +357,8 @@ def build_assistant_manager() -> AssistantManager:
                 confidence_threshold=0.70,
                 max_content_length=500,
             ),
-            retrieval_limit=5,
-            context_max_chars=2500,
+            retrieval_limit=memory_retrieval_limit,
+            context_max_chars=memory_context_max_chars,
         ),
     )
 
