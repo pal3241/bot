@@ -14,82 +14,37 @@ from core.feature_loader import FeatureLoadResult, feature_health_summary, load_
 from core.io import ainput
 from core.registry import FEATURES, Feature
 
-
 MessageDisplay = Callable[[discord.Message, AppContext], Awaitable[None]]
 
 
-async def main_menu(
-    ctx: AppContext,
-    device: DeviceInfo,
-    feature_results: dict[str, FeatureLoadResult],
-) -> None:
+async def main_menu(ctx: AppContext, device: DeviceInfo, feature_results: dict[str, FeatureLoadResult]) -> None:
     while True:
-        if ctx.client.user is None:
-            raise RuntimeError("Identitas bot tidak tersedia setelah client siap.")
-
-        print("\n" + "=" * 60)
-        print("          DISCORD BOT MANAGER")
-        print("=" * 60)
-        print(f"Bot          : {ctx.client.user}")
-        print(f"Device       : {device.kind.value} / {device.machine}")
-        print(f"Python       : {device.python_version}")
-        print(f"Server aktif : {ctx.guild.name if ctx.guild else 'belum dipilih'}")
-        print(f"Runtime      : {feature_health_summary(feature_results)}")
-
-        features: list[tuple[str, Feature]] = list(FEATURES.items())
-        for nomor, (name, _) in enumerate(features, start=1):
-            print(f"{nomor}. {name}")
-        print("\nstatus = lihat health semua fitur")
-        print("exit   = tutup program")
-
-        pilihan: str = (await ainput("\nPilih fitur: ")).strip().lower()
-        if pilihan == "exit":
-            print("\nMenutup bot...")
-            return
+        if ctx.client.user is None: raise RuntimeError("Identitas bot tidak tersedia setelah client siap.")
+        print("\n" + "=" * 60); print("          DISCORD BOT MANAGER"); print("=" * 60)
+        print(f"Bot          : {ctx.client.user}"); print(f"Device       : {device.kind.value} / {device.machine}"); print(f"Python       : {device.python_version}")
+        print(f"Server aktif : {ctx.guild.name if ctx.guild else 'belum dipilih'}"); print(f"Runtime      : {feature_health_summary(feature_results)}")
+        features = list(FEATURES.items())
+        for nomor, (name, _) in enumerate(features, start=1): print(f"{nomor}. {name}")
+        print("\nstatus = lihat health semua fitur"); print("exit   = tutup program")
+        pilihan = (await ainput("\nPilih fitur: ")).strip().lower()
+        if pilihan == "exit": print("\nMenutup bot..."); return
         if pilihan == "status":
-            print("\n" + "-" * 60)
-            print("RUNTIME FEATURE HEALTH")
-            print("-" * 60)
-            for result in feature_results.values():
-                print(
-                    f"{result.spec.label:<24} {result.state.value.upper():<10} "
-                    f"{result.detail}"
-                )
-            print(
-                f"AI Assistant{' ':<12} "
-                f"{'ENABLED' if ctx.assistant is not None else 'DISABLED'}"
-            )
-            continue
-
-        try:
-            index: int = int(pilihan) - 1
-        except ValueError:
-            print("Pilihan tidak valid.")
-            continue
-
-        if not 0 <= index < len(features):
-            print("Pilihan tidak valid.")
-            continue
-
+            print("\n" + "-" * 60); print("RUNTIME FEATURE HEALTH"); print("-" * 60)
+            for result in feature_results.values(): print(f"{result.spec.label:<24} {result.state.value.upper():<10} {result.detail}")
+            print(f"AI Assistant{' ':<12} {'ENABLED' if ctx.assistant is not None else 'DISABLED'}"); continue
+        try: index = int(pilihan) - 1
+        except ValueError: print("Pilihan tidak valid."); continue
+        if not 0 <= index < len(features): print("Pilihan tidak valid."); continue
         name, function = features[index]
-        try:
-            await function(ctx)
-        except asyncio.CancelledError:
-            raise
+        try: await function(ctx)
+        except asyncio.CancelledError: raise
         except Exception as error:
-            print(
-                f"\n[FEATURE ISOLATED] {name} gagal: "
-                f"{type(error).__name__}: {error}"
-            )
-            print("Fitur lain tetap aktif. Kembali ke menu utama.")
+            print(f"\n[FEATURE ISOLATED] {name} gagal: {type(error).__name__}: {error}"); print("Fitur lain tetap aktif. Kembali ke menu utama.")
 
 
-def _load_message_display(
-    feature_results: dict[str, FeatureLoadResult],
-) -> MessageDisplay | None:
+def _load_message_display(feature_results: dict[str, FeatureLoadResult]) -> MessageDisplay | None:
     chat_result = feature_results.get("chat")
-    if chat_result is None or chat_result.module is None:
-        return None
+    if chat_result is None or chat_result.module is None: return None
     candidate = getattr(chat_result.module, "tampilkan_pesan_discord", None)
     return candidate if callable(candidate) else None
 
@@ -97,135 +52,71 @@ def _load_message_display(
 async def _build_assistant_safely() -> Any | None:
     try:
         from assistant import build_assistant_manager
-
-        assistant = build_assistant_manager()
-        await assistant.initialize()
-    except asyncio.CancelledError:
-        raise
-    except Exception as error:
-        print(
-            f"[SUBSYSTEM] AI Assistant: DISABLED "
-            f"({type(error).__name__}: {error})"
-        )
-        return None
-    print("[SUBSYSTEM] AI Assistant: ENABLED")
-    return assistant
+        assistant = build_assistant_manager(); await assistant.initialize()
+    except asyncio.CancelledError: raise
+    except Exception as error: print(f"[SUBSYSTEM] AI Assistant: DISABLED ({type(error).__name__}: {error})"); return None
+    print("[SUBSYSTEM] AI Assistant: ENABLED"); return assistant
 
 
-def _build_router_safely(
-    client: discord.Client,
-    assistant: Any | None,
-) -> tuple[Any | None, Any | None]:
+def _build_router_safely(client: discord.Client, assistant: Any | None) -> tuple[Any | None, Any | None, Any | None]:
     if assistant is None:
-        print("[SUBSYSTEM] Discord AI Router: SKIPPED (AI Assistant unavailable)")
-        return None, None
+        print("[SUBSYSTEM] Discord AI Router: SKIPPED (AI Assistant unavailable)"); return None, None, None
     try:
+        from actions import build_action_executor
         from assistant.discord import DiscordMessageRouter
         from expression.service import ExpressionService
-
-        expression_service = ExpressionService(
-            client,
-            Path("config/expressions.json"),
-            Path("assets/expressions/gifs"),
-        )
-        router = DiscordMessageRouter(client, assistant, expression_service.sender)
+        expression_service = ExpressionService(client, Path("config/expressions.json"), Path("assets/expressions/gifs"))
+        action_executor = build_action_executor()
+        assistant.attach_action_registry(action_executor.registry)
+        router = DiscordMessageRouter(client, assistant, expression_service.sender, action_executor)
     except Exception as error:
-        print(
-            f"[SUBSYSTEM] Discord AI Router/Expression: DISABLED "
-            f"({type(error).__name__}: {error})"
-        )
-        return None, None
+        print(f"[SUBSYSTEM] Discord AI Router/Action/Expression: DISABLED ({type(error).__name__}: {error})"); return None, None, None
+    print(f"[SUBSYSTEM] Action System: ENABLED tools={','.join(action_executor.registry.names)}")
     print("[SUBSYSTEM] Discord AI Router/Expression: ENABLED")
-    return router, expression_service
+    return router, expression_service, action_executor
 
 
 async def run(token: str) -> None:
-    device: DeviceInfo = detect_device()
-    print("\n" + "=" * 60)
-    print("SENNA SAFE STARTUP")
-    print("=" * 60)
-    print(f"[DEVICE] {format_device_summary(device)}")
-    print("[STARTUP] Memuat fitur satu per satu; kegagalan diisolasi.\n")
-
-    feature_results: dict[str, FeatureLoadResult] = load_features(device)
-
-    intents: discord.Intents = discord.Intents.default()
-    intents.message_content = True
-    client: discord.Client = discord.Client(intents=intents)
-
-    assistant = await _build_assistant_safely()
-    ctx = AppContext(client=client, assistant=assistant, device=device)
-    message_display: MessageDisplay | None = _load_message_display(feature_results)
-    message_router, expression_service = _build_router_safely(client, assistant)
+    device = detect_device(); print("\n" + "=" * 60); print("SENNA SAFE STARTUP"); print("=" * 60); print(f"[DEVICE] {format_device_summary(device)}"); print("[STARTUP] Memuat fitur satu per satu; kegagalan diisolasi.\n")
+    feature_results = load_features(device)
+    intents = discord.Intents.default(); intents.message_content = True; intents.voice_states = True
+    client = discord.Client(intents=intents)
+    assistant = await _build_assistant_safely(); ctx = AppContext(client=client, assistant=assistant, device=device)
+    message_display = _load_message_display(feature_results)
+    message_router, expression_service, _action_executor = _build_router_safely(client, assistant)
 
     async def on_message(message: discord.Message) -> None:
         if message_display is not None:
-            try:
-                await message_display(message, ctx)
-            except asyncio.CancelledError:
-                raise
-            except Exception as error:
-                print(
-                    f"[FEATURE RUNTIME] Terminal Chat display gagal: "
-                    f"{type(error).__name__}: {error}"
-                )
+            try: await message_display(message, ctx)
+            except asyncio.CancelledError: raise
+            except Exception as error: print(f"[FEATURE RUNTIME] Terminal Chat display gagal: {type(error).__name__}: {error}")
         if message_router is not None:
-            try:
-                await message_router.handle(message)
-            except asyncio.CancelledError:
-                raise
-            except Exception as error:
-                print(
-                    f"[SUBSYSTEM RUNTIME] Discord AI Router gagal: "
-                    f"{type(error).__name__}: {error}"
-                )
+            try: await message_router.handle(message)
+            except asyncio.CancelledError: raise
+            except Exception as error: print(f"[SUBSYSTEM RUNTIME] Discord AI Router gagal: {type(error).__name__}: {error}")
 
-    client.event(on_message)
-    await client.login(token)
-    discord_task: asyncio.Task[None] = asyncio.create_task(client.connect(reconnect=True))
-
+    client.event(on_message); await client.login(token); discord_task = asyncio.create_task(client.connect(reconnect=True))
     try:
         await client.wait_until_ready()
-        if client.user is None:
-            raise RuntimeError("Discord client siap tetapi identitas bot tidak tersedia.")
+        if client.user is None: raise RuntimeError("Discord client siap tetapi identitas bot tidak tersedia.")
         if expression_service is not None:
-            try:
-                expression_service.refresh_runtime()
-            except Exception as error:
-                print(
-                    f"[SUBSYSTEM] Expression runtime refresh gagal: "
-                    f"{type(error).__name__}: {error}; text bot tetap berjalan"
-                )
-        print("\n" + "=" * 60)
-        print("BOT ONLINE - DEGRADED MODE SUPPORTED")
-        print("=" * 60)
-        print(f"Bot      : {client.user}")
-        print(f"Bot ID   : {client.user.id}")
-        print(f"Servers  : {len(client.guilds)}")
-        print(f"Device   : {device.kind.value} ({device.machine})")
-        print(f"Features : {feature_health_summary(feature_results)}")
-        print(f"AI       : {'enabled' if assistant is not None else 'disabled'}")
+            try: expression_service.refresh_runtime()
+            except Exception as error: print(f"[SUBSYSTEM] Expression runtime refresh gagal: {type(error).__name__}: {error}; text bot tetap berjalan")
+        print("\n" + "=" * 60); print("BOT ONLINE - DEGRADED MODE SUPPORTED"); print("=" * 60)
+        print(f"Bot      : {client.user}"); print(f"Bot ID   : {client.user.id}"); print(f"Servers  : {len(client.guilds)}"); print(f"Device   : {device.kind.value} ({device.machine})"); print(f"Features : {feature_health_summary(feature_results)}"); print(f"AI       : {'enabled' if assistant is not None else 'disabled'}")
         await main_menu(ctx, device, feature_results)
     finally:
         if assistant is not None:
-            try:
-                await assistant.close()
-            except Exception as error:
-                print(
-                    f"[SHUTDOWN] AI close gagal: {type(error).__name__}: {error}"
-                )
-        if not client.is_closed():
-            await client.close()
+            try: await assistant.close()
+            except Exception as error: print(f"[SHUTDOWN] AI close gagal: {type(error).__name__}: {error}")
+        if not client.is_closed(): await client.close()
         await discord_task
 
 
 def get_token() -> str:
-    load_dotenv()
-    token: str | None = os.getenv("TOKEN")
-    if token is None or not token.strip():
-        raise RuntimeError("TOKEN tidak ditemukan atau kosong di file .env.")
+    load_dotenv(); token = os.getenv("TOKEN")
+    if token is None or not token.strip(): raise RuntimeError("TOKEN tidak ditemukan atau kosong di file .env.")
     return token
 
 
-if __name__ == "__main__":
-    asyncio.run(run(get_token()))
+if __name__ == "__main__": asyncio.run(run(get_token()))
