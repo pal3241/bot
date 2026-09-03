@@ -395,11 +395,16 @@ async def voice_feature(ctx: AppContext) -> None:
         settings_path=STT_SETTINGS_FILE,
         bot_user_id=ctx.client.user.id,
     )
+    if not service.available:
+        print(
+            "[STT] disabled reason=unsupported_arm "
+            f"architecture={service.architecture_label}"
+        )
     try:
         existing_client: discord.VoiceClient | None = (
             ctx.guild.voice_client if ctx.guild is not None else None
         )
-        if service.settings.enabled and isinstance(
+        if service.available and service.settings.enabled and isinstance(
             existing_client, voice_recv.VoiceRecvClient
         ):
             await service.enable(existing_client)
@@ -489,7 +494,11 @@ async def stt_menu(ctx: AppContext, service: STTService) -> None:
         print("\n" + "=" * 55)
         print("                  STT SETTINGS")
         print("=" * 55)
-        print(f"Status          : {'ON' if service.is_running else 'OFF'}")
+        status: str = "UNAVAILABLE (ARM)" if not service.available else (
+            "ON" if service.is_running else "OFF"
+        )
+        print(f"Status          : {status}")
+        print(f"Architecture    : {service.architecture_label}")
         print(f"Provider        : {settings.provider}")
         print(f"Model           : {settings.model}")
         print(f"Language        : {settings.language}")
@@ -511,6 +520,9 @@ async def stt_menu(ctx: AppContext, service: STTService) -> None:
         print("\nexit = kembali")
         pilihan: str = (await ainput("\nPilih: ")).strip().lower()
         if pilihan == "1":
+            if not service.available:
+                print("STT tidak tersedia pada perangkat ARM dan tetap OFF.")
+                continue
             target_enabled: bool = not settings.enabled
             updated: STTSettings = replace(settings, enabled=target_enabled)
             await service.apply_settings(updated)
@@ -555,6 +567,9 @@ async def stt_menu(ctx: AppContext, service: STTService) -> None:
                 replace(settings, voice_session_timeout_seconds=timeout)
             )
         elif pilihan == "8":
+            if not service.available:
+                print("Test STT tidak tersedia pada perangkat ARM.")
+                continue
             client = await join_voice_channel(ctx)
             if client is None:
                 raise RuntimeError("STT test memerlukan voice connection.")
@@ -605,7 +620,11 @@ def voice_system_status(
     print(f"Channel          : {voice_client.channel.name if voice_client else '-'}")
     print(f"TTS Provider     : {manager.provider_name}")
     print(f"Voice Changer    : {'ON' if converter.enabled else 'OFF'} ({converter.converter})")
-    print(f"STT              : {'ON' if service.is_running else 'OFF'}")
+    stt_status: str = "UNAVAILABLE (ARM)" if not service.available else (
+        "ON" if service.is_running else "OFF"
+    )
+    print(f"STT              : {stt_status}")
+    print(f"Architecture     : {service.architecture_label}")
     print(f"STT Provider     : {service.settings.provider}")
     print(f"STT Model        : {service.settings.model}")
     print(f"STT Queue        : {service.queue_size}")
@@ -640,7 +659,7 @@ async def voice_menu(
             voice_system_status(ctx, manager, service)
         elif pilihan == "5":
             client = await join_voice_channel(ctx)
-            if client is not None and service.settings.enabled:
+            if client is not None and service.available and service.settings.enabled:
                 await service.enable(client)
         elif pilihan == "6":
             await disconnect_voice(ctx, service)

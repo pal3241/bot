@@ -2,6 +2,7 @@ import asyncio
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
@@ -10,6 +11,11 @@ from stt.audio.vad import PerUserVAD
 from stt.models import AudioUtterance
 from stt.session import VoiceSessionKey, VoiceSessionRouter, VoiceSessionState
 from stt.settings import STTSettings, load_settings, save_settings
+from core.runtime_platform import (
+    is_arm_architecture,
+    runtime_architectures,
+    runtime_is_arm,
+)
 
 
 def build_settings() -> STTSettings:
@@ -46,6 +52,23 @@ class STTSettingsTests(unittest.TestCase):
         waveform = pcm_stereo_48k_to_mono_16k(stereo_samples.tobytes())
         self.assertEqual(waveform.dtype, np.float32)
         self.assertEqual(len(waveform), 1600)
+
+
+class RuntimePlatformTests(unittest.TestCase):
+    def test_arm_and_non_arm_architectures(self) -> None:
+        for architecture in ("ARM64", "aarch64", "armv7l", "arm-v8"):
+            self.assertTrue(is_arm_architecture(architecture))
+        for architecture in ("AMD64", "x86_64", "i386"):
+            self.assertFalse(is_arm_architecture(architecture))
+
+    def test_runtime_uses_machine_and_windows_architecture(self) -> None:
+        with patch("platform.machine", return_value="AMD64"), patch.dict(
+            "os.environ",
+            {"PROCESSOR_ARCHITECTURE": "AMD64", "PROCESSOR_ARCHITEW6432": "ARM64"},
+            clear=True,
+        ):
+            self.assertEqual(runtime_architectures(), ("AMD64", "ARM64"))
+            self.assertTrue(runtime_is_arm())
 
 
 class VoiceSessionTests(unittest.TestCase):

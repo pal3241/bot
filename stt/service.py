@@ -1,17 +1,25 @@
 import asyncio
 from dataclasses import replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from discord.ext import voice_recv
 
 from assistant.manager import AssistantManager
+from core.runtime_platform import runtime_architectures, runtime_is_arm
 from stt.audio.vad import PerUserVAD
 from stt.discord.receiver import DiscordVoiceReceiver, PerUserPCMSink
-from stt.manager import STTManager
 from stt.models import AudioUtterance, STTResult
 from stt.session import VoiceRoute, VoiceSessionKey, VoiceSessionRouter
 from stt.settings import STTSettings, save_settings
 from voice.manager import VoiceManager
+
+if TYPE_CHECKING:
+    from stt.manager import STTManager
+
+
+class STTUnavailableError(RuntimeError):
+    pass
 
 
 class STTService:
@@ -38,6 +46,8 @@ class STTService:
         self._output_worker: asyncio.Task[None] | None = None
         self._assistant_speaking: bool = False
         self._test_future: asyncio.Future[STTResult] | None = None
+        self._architectures: tuple[str, ...] = runtime_architectures()
+        self._available: bool = not runtime_is_arm()
 
     @staticmethod
     def _create_sessions(settings: STTSettings) -> VoiceSessionRouter:
@@ -47,6 +57,13 @@ class STTService:
         )
 
     async def enable(self, client: voice_recv.VoiceRecvClient) -> None:
+        if not self._available:
+            architectures: str = ", ".join(self._architectures) or "tidak diketahui"
+            raise STTUnavailableError(
+                "STT sementara dinonaktifkan pada perangkat ARM: "
+                f"architecture={architectures}. Gunakan fitur TTS/Voice Changer atau "
+                "jalankan bot pada perangkat x86_64 sampai dukungan ARM diperbaiki."
+            )
         if self.is_running:
             current_channel_id: int | None = (
                 client.channel.id if client.channel is not None else None
@@ -58,6 +75,8 @@ class STTService:
             raise RuntimeError("Voice client belum memiliki guild/channel aktif.")
         self._client = client
         self._voice_channel_id = client.channel.id
+        from stt.manager import STTManager
+
         self._manager = STTManager(self.settings, self._handle_result)
         self._manager.start()
         self._vad = PerUserVAD(
@@ -241,6 +260,14 @@ class STTService:
     @property
     def active_sessions(self) -> int:
         return self._sessions.active_count
+
+    @property
+    def available(self) -> bool:
+        return self._available
+
+    @property
+    def architecture_label(self) -> str:
+        return ", ".join(self._architectures) or "tidak diketahui"
 
 
 def set_enabled(settings: STTSettings, enabled: bool) -> STTSettings:
