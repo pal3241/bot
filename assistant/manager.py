@@ -20,7 +20,7 @@ from assistant.response import AssistantResponse
 from assistant.settings import AISettings, load_settings
 from assistant.session import ChatSession, SessionManager
 from expression.parser import expression_response_instruction, parse_expression_response
-from memory.context import build_identity_context
+from memory.context import build_identity_context, enforce_owner_addressing
 from memory.extractor import (
     ParsedMemoryResponse,
     parse_explicit_memory_command,
@@ -113,7 +113,11 @@ class AssistantManager:
             system_prompt: str = (
                 f"{self.personality.load()}\nCurrent input source: {source}.\n"
                 "This is a multi-user Discord conversation. Treat each Discord "
-                "user ID as a distinct canonical identity and never confuse speakers.\n"
+                "user ID as a distinct canonical identity and never confuse speakers. "
+                "Internal markers such as CURRENT SPEAKER, CURRENT MESSAGE, conversation "
+                "history labels, Discord IDs, memory metadata, and expression metadata are "
+                "private protocol context. Never quote, reveal, summarize, or reproduce those "
+                "markers in the visible reply.\n"
                 f"{identity_context}"
             )
             explicit_candidate: MemoryCandidate | None = (
@@ -135,7 +139,7 @@ class AssistantManager:
             async with self._llm_lock:
                 raw_response: str = await self._llm.chat(messages)
             parsed_response: ParsedMemoryResponse = parse_memory_response(raw_response)
-            response_text: str = parsed_response.text
+            response_text: str = enforce_owner_addressing(parsed_response.text, identity)
             candidate: MemoryCandidate | None = (
                 explicit_candidate
                 or (parsed_response.candidate if memory_enabled else None)
