@@ -35,7 +35,9 @@ class OpenAICompatibleProvider(LLMProvider):
         self._endpoint: str = endpoint
         self._api_key: str = api_key
         self._timeout: aiohttp.ClientTimeout = aiohttp.ClientTimeout(
-            total=request_timeout_seconds
+            total=request_timeout_seconds,
+            connect=min(10.0, request_timeout_seconds),
+            sock_connect=min(10.0, request_timeout_seconds),
         )
         self._max_tokens: int = max_tokens
         self._retry_count: int = retry_count
@@ -46,7 +48,17 @@ class OpenAICompatibleProvider(LLMProvider):
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(timeout=self._timeout)
+            connector = aiohttp.TCPConnector(
+                limit=16,
+                limit_per_host=8,
+                ttl_dns_cache=300,
+                keepalive_timeout=45.0,
+                enable_cleanup_closed=True,
+            )
+            self._session = aiohttp.ClientSession(
+                timeout=self._timeout,
+                connector=connector,
+            )
         return self._session
 
     def _parse_response(self, body: str, status: int) -> str:
@@ -87,6 +99,7 @@ class OpenAICompatibleProvider(LLMProvider):
         headers: dict[str, str] = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
+            "Accept": "application/json",
             **self._extra_headers,
         }
         payload: dict[str, object] = {
