@@ -1,7 +1,7 @@
 import unittest
 
 from core.structured_response import sanitize_visible_text
-from memory.context import build_identity_context
+from memory.context import build_identity_context, enforce_owner_addressing
 from memory.identity import OwnerResolver
 
 
@@ -22,6 +22,10 @@ class StructuredResponseFirewallTests(unittest.TestCase):
         )
         self.assertEqual(sanitize_visible_text(raw), "oke.")
 
+    def test_pipe_separated_short_expression_metadata_is_removed(self) -> None:
+        raw = "jawaban aman.\nEmotion: affection | Intent: playful\\_teasing | Intensity: 0.5"
+        self.assertEqual(sanitize_visible_text(raw), "jawaban aman.")
+
     def test_multiline_expression_block_is_removed(self) -> None:
         raw = (
             "aman.\nExpression:\n"
@@ -30,24 +34,65 @@ class StructuredResponseFirewallTests(unittest.TestCase):
         )
         self.assertEqual(sanitize_visible_text(raw), "aman.")
 
+    def test_flattened_current_speaker_echo_is_removed(self) -> None:
+        raw = (
+            "[CURRENT SPEAKER] Banuy | id=1286683942887362633 "
+            "[Current message] Berhenti manggil aku sayang dong, nanti pembuat mu marah "
+            "Emotion: affection | Intent: playful\\_teasing | Intensity: 0.5"
+        )
+        self.assertEqual(sanitize_visible_text(raw), "")
+
+    def test_multiline_current_speaker_and_message_payload_are_removed(self) -> None:
+        raw = (
+            "[Current speaker]\nBanuy | id=1286683942887362633\n"
+            "[Current message]\nBerhenti manggil aku sayang dong\n"
+            "jawaban asli setelah metadata"
+        )
+        self.assertEqual(sanitize_visible_text(raw), "jawaban asli setelah metadata")
+
     def test_normal_prose_about_emotions_is_preserved(self) -> None:
         raw = "Emotion itu normal; intensity perasaan bisa berubah."
         self.assertEqual(sanitize_visible_text(raw), raw)
 
 
 class OwnerContextTests(unittest.TestCase):
-    def test_authenticated_owner_has_boss_address_and_respect_guardrails(self) -> None:
+    def test_authenticated_owner_has_boss_address_and_father_daughter_relationship(self) -> None:
         owner = OwnerResolver(123).resolve(123, "Fahri")
         context = build_identity_context(owner, [])
-        self.assertIn("preferred spoken address is 'boss'", context)
+        self.assertIn("preferred spoken title for him is 'boss'", context)
+        self.assertIn("relationship is father/daughter", context)
         self.assertIn("Never seriously insult", context)
         self.assertIn("authenticated by Discord user ID", context)
 
-    def test_non_owner_does_not_receive_owner_relationship_context(self) -> None:
+    def test_non_owner_gets_explicit_owner_title_boundary(self) -> None:
         user = OwnerResolver(123).resolve(456, "Fahri")
         context = build_identity_context(user, [])
-        self.assertNotIn("preferred spoken address is 'boss'", context)
-        self.assertNotIn("OWNER RELATIONSHIP", context)
+        self.assertIn("NOT Sena's configured owner", context)
+        self.assertIn("'boss' is reserved exclusively", context)
+        self.assertNotIn("OWNER RELATIONSHIP - HIGH PRIORITY", context)
+
+    def test_owner_boss_address_is_preserved(self) -> None:
+        owner = OwnerResolver(123).resolve(123, "Fahri")
+        self.assertEqual(
+            enforce_owner_addressing("iya boss, langsung gue cek.", owner),
+            "iya boss, langsung gue cek.",
+        )
+
+    def test_non_owner_direct_boss_address_is_removed(self) -> None:
+        user = OwnerResolver(123).resolve(456, "Banuy")
+        self.assertEqual(
+            enforce_owner_addressing("iya boss, nanti gue cek.", user),
+            "iya, nanti gue cek.",
+        )
+        self.assertEqual(
+            enforce_owner_addressing("boss, sini dulu.", user),
+            "sini dulu.",
+        )
+
+    def test_non_owner_can_still_discuss_a_boss_as_a_noun(self) -> None:
+        user = OwnerResolver(123).resolve(456, "Banuy")
+        text = "Kalau boss kamu marah, jelaskan situasinya dulu."
+        self.assertEqual(enforce_owner_addressing(text, user), text)
 
 
 if __name__ == "__main__":
