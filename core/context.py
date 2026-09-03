@@ -5,13 +5,22 @@ import discord
 
 if TYPE_CHECKING:
     from assistant.manager import AssistantManager
+    from core.device import DeviceInfo
 
 
 @dataclass
 class AppContext:
     client: discord.Client
-    assistant: "AssistantManager"
+    assistant: "AssistantManager | None" = None
+    device: "DeviceInfo | None" = None
     guild: discord.Guild | None = None
     channel: discord.TextChannel | None = None
     voice_channel: discord.VoiceChannel | None = None
     chat_aktif: bool = False
+
+    def require_assistant(self) -> "AssistantManager":
+        if self.assistant is None:
+            raise RuntimeError(
+                "AI Assistant tidak aktif pada runtime ini. Fitur lain tetap dapat digunakan."
+            )
+        return self.assistant
