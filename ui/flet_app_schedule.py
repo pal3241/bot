@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from datetime import datetime
 from typing import Any
@@ -13,7 +14,7 @@ from ui.flet_app_html_upload import SenaFletUI as _BaseSenaFletUI
 
 
 class SenaFletUI(_BaseSenaFletUI):
-    """Control center with persistent scheduler management."""
+    """Control center with persistent universal scheduler management."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -24,7 +25,7 @@ class SenaFletUI(_BaseSenaFletUI):
         )
         self.schedule_channel = ft.Dropdown(label="Channel", expand=True)
         self.schedule_message = ft.TextField(
-            label="Pesan yang akan dikirim",
+            label="Pesan discord.message",
             multiline=True,
             min_lines=2,
             max_lines=5,
@@ -41,12 +42,12 @@ class SenaFletUI(_BaseSenaFletUI):
             border_color=BORDER,
         )
         self.schedule_delay = ft.TextField(
-            label="Atau delay menit",
-            value="10",
+            label="Atau delay detik",
+            value="60",
             border_color=BORDER,
         )
         self.schedule_repeat = ft.TextField(
-            label="Repeat tiap N menit (opsional)",
+            label="Repeat tiap N detik (opsional, min 60)",
             hint_text="kosong = sekali jalan",
             border_color=BORDER,
         )
@@ -75,6 +76,20 @@ class SenaFletUI(_BaseSenaFletUI):
             zone = ZoneInfo("UTC")
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
         return dt.astimezone(zone).strftime("%Y-%m-%d %H:%M:%S %Z")
+
+    def _schedule_payload_preview(self, item: Any) -> str:
+        if item.job_type == "discord.message":
+            preview = item.content.replace("\n", " ").strip()
+        else:
+            try:
+                preview = json.dumps(
+                    item.payload,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            except (TypeError, ValueError):
+                preview = repr(item.payload)
+        return preview if len(preview) <= 100 else preview[:97] + "..."
 
     async def _schedule_guild_changed(self, e: Any) -> None:
         del e
@@ -111,9 +126,9 @@ class SenaFletUI(_BaseSenaFletUI):
             mention_user_id = int(mention_raw) if mention_raw else None
             run_at = (self.schedule_run_at.value or "").strip() or None
             delay_raw = (self.schedule_delay.value or "").strip()
-            delay_seconds = None if run_at else float(delay_raw) * 60.0
+            delay_seconds = None if run_at else float(delay_raw)
             repeat_raw = (self.schedule_repeat.value or "").strip()
-            recurrence_seconds = int(float(repeat_raw) * 60) if repeat_raw else None
+            recurrence_seconds = int(float(repeat_raw)) if repeat_raw else None
 
             guild_id = int(self.schedule_guild.value) if self.schedule_guild.value else None
             item = await scheduler.create(
@@ -128,7 +143,8 @@ class SenaFletUI(_BaseSenaFletUI):
             )
             tag = f" · tag=<@{item.mention_user_id}>" if item.mention_user_id else ""
             self.schedule_status.value = (
-                f"Schedule #{item.id} dibuat · {self._schedule_local_time(item.next_run_at)}{tag}"
+                f"Schedule #{item.id} dibuat · type={item.job_type} · "
+                f"{self._schedule_local_time(item.next_run_at)}{tag}"
             )
             self.schedule_status.color = SUCCESS
             await self._refresh_schedule()
@@ -157,7 +173,7 @@ class SenaFletUI(_BaseSenaFletUI):
                 [
                     (
                         item.id,
-                        f"#{item.id} · {self._schedule_local_time(item.next_run_at)}",
+                        f"#{item.id} · {item.job_type} · {self._schedule_local_time(item.next_run_at)}",
                     )
                     for item in items
                 ]
@@ -168,17 +184,20 @@ class SenaFletUI(_BaseSenaFletUI):
 
             lines: list[str] = []
             for item in items:
-                tag = f" · tag=<@{item.mention_user_id}>" if item.mention_user_id else ""
+                tag = (
+                    f" · tag=<@{item.mention_user_id}>"
+                    if item.job_type == "discord.message" and item.mention_user_id
+                    else ""
+                )
                 repeat = (
-                    f" · repeat={item.recurrence_seconds // 60}m"
+                    f" · repeat={item.recurrence_seconds}s"
                     if item.recurrence_seconds
                     else ""
                 )
-                preview = item.content.replace("\n", " ")
-                if len(preview) > 90:
-                    preview = preview[:87] + "..."
+                preview = self._schedule_payload_preview(item)
                 lines.append(
-                    f"#{item.id} · {self._schedule_local_time(item.next_run_at)}{tag}{repeat} · {preview}"
+                    f"#{item.id} · {item.job_type} · "
+                    f"{self._schedule_local_time(item.next_run_at)}{tag}{repeat} · {preview}"
                 )
             self.schedule_list.value = "\n".join(lines) or "Tidak ada schedule aktif."
         except Exception as error:
@@ -231,11 +250,36 @@ class SenaFletUI(_BaseSenaFletUI):
         if self.page:
             self.page.run_task(self._refresh_schedule)
 
+        scheduler = self.ctx.scheduler
+        registered_jobs = (
+            ", ".join(scheduler.job_types)
+            if scheduler is not None and scheduler.job_types
+            else "none"
+        )
+
         return self._body(
             [
                 self._title(
                     "Schedule",
-                    "Pesan terjadwal, repeat, channel target, dan user mention",
+                    "Universal persistent job scheduler untuk semua fitur Sena",
+                ),
+                self._panel(
+                    ft.Column(
+                        controls=[
+                            ft.Text(
+                                "Registered job types",
+                                color=TEXT,
+                                weight=ft.FontWeight.W_600,
+                            ),
+                            ft.Text(registered_jobs, color=MUTED, size=11, selectable=True),
+                            ft.Text(
+                                "Panel ini membuat job discord.message. Job fitur lain seperti music.play dibuat lewat AI atau panel fitur tersebut setelah handler-nya terdaftar.",
+                                color=MUTED,
+                                size=10,
+                            ),
+                        ],
+                        spacing=6,
+                    )
                 ),
                 self._panel(
                     ft.Column(
@@ -256,12 +300,12 @@ class SenaFletUI(_BaseSenaFletUI):
                                 ]
                             ),
                             ft.Text(
-                                "Kalau Run at diisi, Delay menit diabaikan. Timezone default mengikuti SENA_TIMEZONE (Asia/Jakarta). Tag memakai Discord user ID.",
+                                "Kalau Run at diisi, delay detik diabaikan. One-shot boleh 20 detik; repeat minimal 60 detik. Timezone default SENA_TIMEZONE (Asia/Jakarta).",
                                 color=MUTED,
                                 size=10,
                             ),
                             ft.Button(
-                                "Create schedule",
+                                "Create message schedule",
                                 icon=ft.Icons.SCHEDULE,
                                 on_click=self._create_schedule,
                             ),
@@ -275,7 +319,7 @@ class SenaFletUI(_BaseSenaFletUI):
                         controls=[
                             ft.Row(
                                 controls=[
-                                    ft.Text("Active schedules", color=TEXT, weight=ft.FontWeight.W_600, expand=True),
+                                    ft.Text("Active scheduled jobs", color=TEXT, weight=ft.FontWeight.W_600, expand=True),
                                     ft.IconButton(icon=ft.Icons.REFRESH, on_click=self._refresh_schedule),
                                 ]
                             ),
