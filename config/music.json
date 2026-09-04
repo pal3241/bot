@@ -1,0 +1,8 @@
+{
+  "default_volume_percent": 70,
+  "max_volume_percent": 150,
+  "search_limit": 5,
+  "max_playlist_items": 25,
+  "ffmpeg_path": "ffmpeg",
+  "disconnect_on_stop": false
+}
