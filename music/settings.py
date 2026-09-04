@@ -5,7 +5,14 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 
-STREAM_PROFILES = ("low", "balanced", "high")
+STREAM_PROFILES = ("data_saver", "ultra_low", "low", "balanced", "high")
+STREAM_PROFILE_DISCORD_BITRATE_KBPS: dict[str, int] = {
+    "data_saver": 48,
+    "ultra_low": 64,
+    "low": 80,
+    "balanced": 96,
+    "high": 128,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,8 +23,9 @@ class MusicSettings:
     max_playlist_items: int = 25
     ffmpeg_path: str = "ffmpeg"
     disconnect_on_stop: bool = False
-    # low: prefer <=96 kbps audio, balanced: <=128 kbps, high: best audio.
-    # Existing config files without this key automatically use low bandwidth mode.
+    # data_saver: prefer <=48 kbps source + 48 kbps Discord Opus
+    # ultra_low: <=64 + 64, low: <=96 + 80, balanced: <=128 + 96,
+    # high: best source + 128 kbps Discord Opus.
     stream_profile: str = "low"
 
 
@@ -38,6 +46,11 @@ def _stream_profile(value: object, fallback: str = "low") -> str:
         return fallback
     normalized = value.strip().casefold()
     return normalized if normalized in STREAM_PROFILES else fallback
+
+
+def discord_bitrate_kbps(profile: str) -> int:
+    normalized = _stream_profile(profile)
+    return STREAM_PROFILE_DISCORD_BITRATE_KBPS[normalized]
 
 
 def normalize_settings(value: MusicSettings) -> MusicSettings:
