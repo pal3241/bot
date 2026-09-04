@@ -57,6 +57,10 @@ async def main_menu(
                 f"AI Assistant{' ':<12} "
                 f"{'ENABLED' if ctx.assistant is not None else 'DISABLED'}"
             )
+            print(
+                f"Scheduler{' ':<15} "
+                f"{'ENABLED' if ctx.scheduler is not None and ctx.scheduler.available else 'DISABLED'}"
+            )
             continue
         try:
             index = int(pilihan) - 1
@@ -107,9 +111,25 @@ async def _build_assistant_safely() -> Any | None:
     return assistant
 
 
+def _build_scheduler_safely(client: discord.Client) -> Any | None:
+    try:
+        from scheduler import SchedulerManager
+
+        scheduler = SchedulerManager(client, Path("data/sena_schedule.db"))
+    except Exception as error:
+        print(
+            f"[SUBSYSTEM] Scheduler: DISABLED "
+            f"({type(error).__name__}: {error})"
+        )
+        return None
+    print("[SUBSYSTEM] Scheduler: CREATED (starts after Discord ready)")
+    return scheduler
+
+
 def _build_router_safely(
     client: discord.Client,
     assistant: Any | None,
+    scheduler: Any | None,
 ) -> tuple[Any | None, Any | None, Any | None]:
     if assistant is None:
         print("[SUBSYSTEM] Discord AI Router: SKIPPED (AI Assistant unavailable)")
@@ -124,7 +144,7 @@ def _build_router_safely(
             Path("config/expressions.json"),
             Path("assets/expressions/gifs"),
         )
-        action_executor = build_action_executor()
+        action_executor = build_action_executor(scheduler)
         assistant.attach_action_registry(action_executor.registry)
         router = DiscordMessageRouter(
             client,
@@ -205,11 +225,18 @@ async def run(token: str) -> None:
     client = discord.Client(intents=intents)
 
     assistant = await _build_assistant_safely()
-    ctx = AppContext(client=client, assistant=assistant, device=device)
+    scheduler = _build_scheduler_safely(client)
+    ctx = AppContext(
+        client=client,
+        assistant=assistant,
+        device=device,
+        scheduler=scheduler,
+    )
     message_display = _load_message_display(feature_results)
     message_router, expression_service, action_executor = _build_router_safely(
         client,
         assistant,
+        scheduler,
     )
     runtime_status = _build_runtime_status(
         assistant,
@@ -260,6 +287,16 @@ async def run(token: str) -> None:
             raise RuntimeError(
                 "Discord client siap tetapi identitas bot tidak tersedia."
             )
+
+        if scheduler is not None:
+            try:
+                await scheduler.start()
+            except Exception as error:
+                print(
+                    f"[SUBSYSTEM] Scheduler start gagal: "
+                    f"{type(error).__name__}: {error}; bot tetap berjalan"
+                )
+
         if expression_service is not None:
             try:
                 expression_service.refresh_runtime()
@@ -278,6 +315,9 @@ async def run(token: str) -> None:
         print(f"Device   : {device.kind.value} ({device.machine})")
         print(f"Features : {feature_health_summary(feature_results)}")
         print(f"Runtime  : {runtime_status.summary()}")
+        print(
+            f"Scheduler: {'ONLINE' if scheduler is not None and scheduler.available else 'OFFLINE'}"
+        )
 
         flet_ui = _build_flet_ui_safely(
             ctx,
@@ -300,6 +340,14 @@ async def run(token: str) -> None:
         else:
             await main_menu(ctx, device, feature_results)
     finally:
+        if scheduler is not None:
+            try:
+                await scheduler.close()
+            except Exception as error:
+                print(
+                    f"[SHUTDOWN] Scheduler close gagal: "
+                    f"{type(error).__name__}: {error}"
+                )
         if assistant is not None:
             try:
                 await assistant.close()
