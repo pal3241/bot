@@ -1,29 +1,46 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
 import aiosqlite
 
-from scheduler.models import ScheduledMessage
+from scheduler.models import ScheduledJob
 
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _row_to_schedule(row: aiosqlite.Row) -> ScheduledMessage:
-    return ScheduledMessage(
+def _decode_payload(row: aiosqlite.Row) -> tuple[str, dict[str, object]]:
+    job_type = str(row["job_type"] or "discord.message").strip().casefold()
+    raw_payload = row["payload_json"]
+    if isinstance(raw_payload, str) and raw_payload.strip():
+        try:
+            value = json.loads(raw_payload)
+        except json.JSONDecodeError:
+            value = None
+        if isinstance(value, dict):
+            return job_type, dict(value)
+
+    # Migration fallback for schedules written before universal jobs existed.
+    payload: dict[str, object] = {"message": str(row["content"] or "")}
+    mention = row["mention_user_id"]
+    if mention is not None:
+        payload["mention_user_id"] = int(mention)
+    return "discord.message", payload
+
+
+def _row_to_schedule(row: aiosqlite.Row) -> ScheduledJob:
+    job_type, payload = _decode_payload(row)
+    return ScheduledJob(
         id=int(row["id"]),
         guild_id=int(row["guild_id"]) if row["guild_id"] is not None else None,
         channel_id=int(row["channel_id"]),
         creator_id=int(row["creator_id"]),
-        content=str(row["content"]),
-        mention_user_id=(
-            int(row["mention_user_id"])
-            if row["mention_user_id"] is not None
-            else None
-        ),
+        job_type=job_type,
+        payload=payload,
         next_run_at=str(row["next_run_at"]),
         recurrence_seconds=(
             int(row["recurrence_seconds"])
@@ -59,8 +76,10 @@ class ScheduleStore:
                 guild_id INTEGER,
                 channel_id INTEGER NOT NULL,
                 creator_id INTEGER NOT NULL,
-                content TEXT NOT NULL,
+                content TEXT NOT NULL DEFAULT '',
                 mention_user_id INTEGER,
+                job_type TEXT NOT NULL DEFAULT 'discord.message',
+                payload_json TEXT,
                 next_run_at TEXT NOT NULL,
                 recurrence_seconds INTEGER,
                 active INTEGER NOT NULL DEFAULT 1,
@@ -70,11 +89,27 @@ class ScheduleStore:
             )
             """
         )
+
+        # In-place migration for databases created by the original message-only scheduler.
+        cursor = await connection.execute("PRAGMA table_info(schedules)")
+        rows = await cursor.fetchall()
+        await cursor.close()
+        columns = {str(row[1]) for row in rows}
+        if "job_type" not in columns:
+            await connection.execute(
+                "ALTER TABLE schedules ADD COLUMN job_type TEXT NOT NULL DEFAULT 'discord.message'"
+            )
+        if "payload_json" not in columns:
+            await connection.execute("ALTER TABLE schedules ADD COLUMN payload_json TEXT")
+
         await connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(active, next_run_at)"
         )
         await connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_schedules_creator ON schedules(creator_id, active)"
+        )
+        await connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_schedules_job_type ON schedules(job_type, active)"
         )
         await connection.commit()
         self._connection = connection
@@ -90,25 +125,48 @@ class ScheduleStore:
         guild_id: int | None,
         channel_id: int,
         creator_id: int,
-        content: str,
-        mention_user_id: int | None,
+        job_type: str,
+        payload: dict[str, object],
         next_run_at: str,
         recurrence_seconds: int | None,
-    ) -> ScheduledMessage:
+    ) -> ScheduledJob:
         connection = self._require_connection()
+        normalized_type = job_type.strip().casefold()
+        if not normalized_type:
+            raise ValueError("job_type kosong.")
+        try:
+            payload_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"payload schedule tidak JSON-serializable: {error}") from error
+
+        # Legacy columns remain populated for compatibility with older dashboards/tools.
+        message_value = payload.get("message", payload.get("content", ""))
+        legacy_content = message_value if isinstance(message_value, str) else ""
+        mention_value = payload.get("mention_user_id")
+        legacy_mention = (
+            int(mention_value)
+            if isinstance(mention_value, int)
+            and not isinstance(mention_value, bool)
+            and mention_value > 0
+            else None
+        )
+
         cursor = await connection.execute(
             """
             INSERT INTO schedules (
                 guild_id, channel_id, creator_id, content, mention_user_id,
-                next_run_at, recurrence_seconds, active, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+                job_type, payload_json, next_run_at, recurrence_seconds,
+                active, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
             """,
             (
                 guild_id,
                 channel_id,
                 creator_id,
-                content,
-                mention_user_id,
+                legacy_content,
+                legacy_mention,
+                normalized_type,
+                payload_json,
                 next_run_at,
                 recurrence_seconds,
                 utc_now(),
@@ -124,7 +182,7 @@ class ScheduleStore:
             raise RuntimeError("Schedule baru tidak ditemukan setelah INSERT.")
         return record
 
-    async def get(self, schedule_id: int) -> ScheduledMessage | None:
+    async def get(self, schedule_id: int) -> ScheduledJob | None:
         connection = self._require_connection()
         cursor = await connection.execute(
             "SELECT * FROM schedules WHERE id = ?",
@@ -136,7 +194,7 @@ class ScheduleStore:
 
     async def list_active(
         self, creator_id: int | None = None
-    ) -> list[ScheduledMessage]:
+    ) -> list[ScheduledJob]:
         connection = self._require_connection()
         if creator_id is None:
             cursor = await connection.execute(
@@ -151,7 +209,7 @@ class ScheduleStore:
         await cursor.close()
         return [_row_to_schedule(row) for row in rows]
 
-    async def due(self, now_iso: str, limit: int = 50) -> list[ScheduledMessage]:
+    async def due(self, now_iso: str, limit: int = 50) -> list[ScheduledJob]:
         connection = self._require_connection()
         cursor = await connection.execute(
             """
