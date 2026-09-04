@@ -1,3 +1,3 @@
-from ui.flet_app_live_logs import SenaFletUI
+from ui.flet_app import SenaFletUI
 
 __all__ = ["SenaFletUI"]
