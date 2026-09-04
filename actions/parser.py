@@ -11,6 +11,25 @@ _ACTION_TAG_RE = re.compile(
     flags=re.IGNORECASE | re.DOTALL,
 )
 _ACTION_TOOL_RE = re.compile(r"[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+")
+_SCHEDULE_HINT_RE = re.compile(
+    r"\b(?:"
+    r"\d+(?:[.,]\d+)?\s*(?:detik|second|seconds|menit|minute|minutes|jam|hour|hours|hari|day|days)\s+lagi"
+    r"|dalam\s+\d+(?:[.,]\d+)?\s*(?:detik|second|seconds|menit|minute|minutes|jam|hour|hours|hari|day|days)"
+    r"|nanti|besok|lusa|setiap|tiap"
+    r"|jam\s+\d{1,2}(?::\d{2})?"
+    r")\b",
+    flags=re.IGNORECASE,
+)
+_PLAY_RE = re.compile(
+    r"^(?:tolong\s+)?(?:putar(?:kan)?|play|mainkan)\s+"
+    r"(?:(?:musik|lagu|track)\s+)?(.+?)\s*$",
+    flags=re.IGNORECASE,
+)
+_VOLUME_RE = re.compile(
+    r"^(?:set\s+)?(?:volume|vol|suara)(?:\s+(?:musik|lagu))?\s*(?:ke\s*)?"
+    r"(\d{1,3})(?:\s*(?:%|persen|percent))?\s*$",
+    flags=re.IGNORECASE,
+)
 
 
 def _dedupe_actions(actions: list[ActionRequest]) -> tuple[ActionRequest, ...]:
@@ -87,9 +106,41 @@ _VOICE_WORDS = ("vc", "voice", "voice channel", "suara")
 _MUSIC_WORDS = ("musik", "music", "lagu", "track")
 
 
+def _clean_command_text(text: str) -> str:
+    clean = re.sub(r"\s+", " ", text.strip())
+    clean = re.sub(r"^(?:sena|senna|sen)\s*[,,:-]?\s*", "", clean, flags=re.IGNORECASE)
+    return clean.strip()
+
+
+def looks_like_music_request(text: str) -> bool:
+    clean = _clean_command_text(text)
+    normalized = clean.casefold()
+    if not normalized:
+        return False
+    if _PLAY_RE.match(clean) is not None or _VOLUME_RE.match(clean) is not None:
+        return True
+    if any(word in normalized for word in _MUSIC_WORDS):
+        return True
+    return normalized in {
+        "pause",
+        "resume",
+        "lanjut",
+        "lanjutkan",
+        "skip",
+        "next",
+        "stop",
+        "queue",
+        "antrian",
+    }
+
+
 def infer_safe_actions_from_text(text: str) -> tuple[ActionRequest, ...]:
-    """Deterministic fallback for obvious, argument-free SAFE actions."""
-    normalized = re.sub(r"\s+", " ", text.strip().casefold())
+    """Deterministic fallback for obvious actions when the planner returns none.
+
+    Scheduled requests are intentionally not converted into immediate music actions.
+    """
+    clean = _clean_command_text(text)
+    normalized = clean.casefold()
     if not normalized:
         return ()
 
@@ -102,16 +153,57 @@ def infer_safe_actions_from_text(text: str) -> tuple[ActionRequest, ...]:
     if any(phrase in normalized for phrase in ("masuk sini", "join sini", "ikut sini")):
         return (ActionRequest("voice.join_user", {}),)
 
+    # Never turn a delayed request into immediate playback. The LLM must create
+    # schedule.create for these commands.
+    if _SCHEDULE_HINT_RE.search(clean) is not None:
+        return ()
+
+    volume_match = _VOLUME_RE.match(clean)
+    if volume_match is not None:
+        return (
+            ActionRequest(
+                "music.volume",
+                {"percent": int(volume_match.group(1))},
+            ),
+        )
+
+    play_match = _PLAY_RE.match(clean)
+    if play_match is not None:
+        query = play_match.group(1).strip()
+        if query:
+            return (ActionRequest("music.play", {"query": query}),)
+
     mentions_music = any(word in normalized for word in _MUSIC_WORDS)
-    if mentions_music:
-        if any(word in normalized for word in ("pause", "jeda")):
+    if mentions_music or normalized in {
+        "pause",
+        "resume",
+        "lanjut",
+        "lanjutkan",
+        "skip",
+        "next",
+        "stop",
+        "queue",
+        "antrian",
+    }:
+        if any(word in normalized for word in ("pause", "jeda")) or normalized == "pause":
             return (ActionRequest("music.pause", {}),)
-        if any(word in normalized for word in ("resume", "lanjutkan", "lanjut lagi")):
+        if any(word in normalized for word in ("resume", "lanjutkan", "lanjut lagi")) or normalized in {"resume", "lanjut", "lanjutkan"}:
             return (ActionRequest("music.resume", {}),)
-        if any(word in normalized for word in ("skip", "next", "lewati")):
+        if any(word in normalized for word in ("skip", "next", "lewati")) or normalized in {"skip", "next"}:
             return (ActionRequest("music.skip", {}),)
-        if any(phrase in normalized for phrase in ("stop musik", "stop lagu", "matikan musik", "berhenti musik")):
+        if any(
+            phrase in normalized
+            for phrase in (
+                "stop musik",
+                "stop lagu",
+                "matikan musik",
+                "berhenti musik",
+                "berhenti lagu",
+            )
+        ) or normalized == "stop":
             return (ActionRequest("music.stop", {}),)
+        if "queue" in normalized or "antrian" in normalized:
+            return (ActionRequest("music.queue", {}),)
     return ()
 
 
