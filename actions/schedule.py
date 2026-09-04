@@ -69,11 +69,14 @@ def _auto_mention(context: ActionContext) -> int | None:
 
 def _speaker_voice_channel_id(context: ActionContext) -> int | None:
     author = context.message.author
-    if not isinstance(author, discord.Member) or author.voice is None:
-        return None
-    channel = author.voice.channel
-    if isinstance(channel, (discord.VoiceChannel, discord.StageChannel)):
-        return channel.id
+    if isinstance(author, discord.Member) and author.voice is not None:
+        channel = author.voice.channel
+        if isinstance(channel, (discord.VoiceChannel, discord.StageChannel)):
+            return channel.id
+    guild = context.message.guild
+    voice = guild.voice_client if guild is not None else None
+    if voice is not None and voice.is_connected() and voice.channel is not None:
+        return voice.channel.id
     return None
 
 
@@ -148,8 +151,13 @@ async def _create_handler(
             payload = dict(payload_value)
             if job_type == "music.play" and "voice_channel_id" not in payload:
                 voice_channel_id = _speaker_voice_channel_id(context)
-                if voice_channel_id is not None:
-                    payload["voice_channel_id"] = voice_channel_id
+                if voice_channel_id is None:
+                    return ActionResult(
+                        request.tool,
+                        ActionStatus.REJECTED,
+                        "schedule music membutuhkan target VC; masuk ke voice channel dulu",
+                    )
+                payload["voice_channel_id"] = voice_channel_id
             item = await scheduler.create_job(
                 guild_id=guild_id,
                 channel_id=target_channel_id,
@@ -269,7 +277,7 @@ def register_schedule_actions(
     registry.register(
         ActionSpec(
             "schedule.create",
-            "Create a universal persistent scheduled job. For a Discord message omit job_type or use job_type='discord.message' with message(string), optional mention_user_id, and run_at OR delay_seconds. For another registered feature use job_type(string) plus job_arguments(object), and run_at OR delay_seconds. For job_type='music.play', job_arguments requires query(string); the speaker's current voice channel is captured automatically when available. Optional recurrence_seconds>=60 and channel_id. Never invent a job_type. Currently registered scheduled job types: "
+            "Create a universal persistent scheduled job. For a Discord message omit job_type or use job_type='discord.message' with message(string), optional mention_user_id, and run_at OR delay_seconds. For another registered feature use job_type(string) plus job_arguments(object), and run_at OR delay_seconds. For job_type='music.play', job_arguments requires query(string); the speaker's current voice channel is captured automatically and the schedule is rejected when no target VC exists. Optional recurrence_seconds>=60 and channel_id. Never invent a job_type. Currently registered scheduled job types: "
             + scheduler.job_catalog(),
             ActionRisk.MODERATE,
             create,
