@@ -3,7 +3,9 @@ import os
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import aiosqlite
 
@@ -68,6 +70,23 @@ def _positive_int_env(name: str, fallback: int) -> int:
         print(f"[SENA PERF] invalid {name}={raw!r}; fallback={fallback}")
         return fallback
     return value if value > 0 else fallback
+
+
+def _current_time_context() -> str:
+    timezone_name = os.getenv("SENA_TIMEZONE", "Asia/Jakarta").strip() or "Asia/Jakarta"
+    try:
+        zone = ZoneInfo(timezone_name)
+    except Exception:
+        timezone_name = "UTC"
+        zone = ZoneInfo("UTC")
+    now = datetime.now(zone)
+    return (
+        "[CURRENT TIME - TRUSTED RUNTIME CONTEXT]\n"
+        f"Timezone: {timezone_name}\n"
+        f"Local datetime: {now.isoformat()}\n"
+        "Use this clock to resolve relative or wall-clock schedule requests. "
+        "For schedule.create, run_at must be an ISO-8601 datetime with an explicit UTC offset."
+    )
 
 
 class AssistantManager:
@@ -156,9 +175,6 @@ class AssistantManager:
         async with session.lock:
             identity = self.owner_resolver.resolve(user_id, clean_name)
 
-            # Long-term memory is per Discord user ID and intentionally independent of
-            # channel/server session history. This lets the same user be recognized in
-            # another channel while preserving strict user-to-user isolation.
             memory_enabled = source == "discord_text"
             memories: list[MemoryRecord] = []
             memory_started = time.monotonic()
@@ -175,6 +191,7 @@ class AssistantManager:
             system_prompt = (
                 f"{self.personality.load()}\n\n"
                 f"{self.audience_personality.prompt_for(identity)}\n\n"
+                f"{_current_time_context()}\n\n"
                 f"Current input source: {source}.\n"
                 "This is a multi-user Discord conversation. Treat each Discord user ID "
                 "as a distinct canonical identity and never confuse speakers. Internal "
