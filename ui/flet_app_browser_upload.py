@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.metadata as importlib_metadata
 from pathlib import Path
 from typing import Any
 
@@ -42,34 +43,56 @@ class SenaFletUI(_BaseSenaFletUI):
             disabled=True,
         )
 
+    @staticmethod
+    def _package_version(name: str) -> str:
+        try:
+            return importlib_metadata.version(name)
+        except importlib_metadata.PackageNotFoundError:
+            return "missing"
+
     async def main(self, page: ft.Page) -> None:
-        # FilePicker is a Service in the supported Flet runtime and must never be
-        # inserted into page.overlay. Register it after the normal page is built,
-        # synchronize once, then invoke pick_files() from user interaction.
-        await super().main(page)
+        # FilePicker is a Service. Register it BEFORE the first page/control-tree
+        # handshake so the web client receives the service registry together with the
+        # initial dashboard. Registering it only after super().main() can leave a web
+        # session with a picker object that exists in Python but has no client binding.
         if self.emoji_file_picker not in page.services:
             page.services.append(self.emoji_file_picker)
+
+        await super().main(page)
         page.update()
         await asyncio.sleep(0)
-        print("[SENA UI EMOJI] FilePicker service registered")
 
-    async def _ensure_file_picker_mounted(self) -> None:
+        print(
+            "[SENA UI EMOJI] FilePicker service pre-registered "
+            f"flet={self._package_version('flet')} "
+            f"flet-web={self._package_version('flet-web')} "
+            f"pickfiles_action={'yes' if hasattr(ft, 'PickFiles') else 'no'}"
+        )
+
+    async def _ensure_file_picker_registered(self) -> None:
         page = self.page
         if page is None:
             raise RuntimeError("Flet page belum siap.")
 
+        # Do NOT use FilePicker.page as a readiness test. On some service-backed Flet
+        # web runtimes that property can raise even while the service is present in the
+        # page registry. The real test is invoking the service method itself.
         if self.emoji_file_picker not in page.services:
             page.services.append(self.emoji_file_picker)
             page.update()
             await asyncio.sleep(0)
 
-        try:
-            _ = self.emoji_file_picker.page
-        except RuntimeError as error:
-            raise RuntimeError(
-                "FilePicker service belum terikat ke page. Pastikan flet dan flet-web "
-                "menggunakan versi yang sama (0.86.5)."
-            ) from error
+    async def _pick_browser_files(self) -> list[ft.FilePickerFile]:
+        await self._ensure_file_picker_registered()
+        return list(
+            await self.emoji_file_picker.pick_files(
+                allow_multiple=True,
+                with_data=True,
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=sorted(_ALLOWED_EMOJI_EXTENSIONS),
+            )
+            or []
+        )
 
     def _format_browser_selection(self) -> str:
         if not self._browser_emoji_files:
@@ -112,14 +135,8 @@ class SenaFletUI(_BaseSenaFletUI):
     async def _emoji_browser_pick_files(self, e: Any) -> None:
         del e
         try:
-            await self._ensure_file_picker_mounted()
-            files = await self.emoji_file_picker.pick_files(
-                allow_multiple=True,
-                with_data=True,
-                file_type=ft.FilePickerFileType.CUSTOM,
-                allowed_extensions=sorted(_ALLOWED_EMOJI_EXTENSIONS),
-            )
-            self._set_browser_selection(list(files or []))
+            files = await self._pick_browser_files()
+            self._set_browser_selection(files)
         except Exception as error:
             self._browser_emoji_files.clear()
             self.emoji_browser_files.value = "Belum ada file dipilih."
@@ -130,7 +147,10 @@ class SenaFletUI(_BaseSenaFletUI):
             self.emoji_browser_status.color = ERROR
             print(
                 f"[SENA UI EMOJI] file picker failed "
-                f"type={type(error).__name__} detail={error}"
+                f"type={type(error).__name__} detail={error} "
+                f"registered={self.page is not None and self.emoji_file_picker in self.page.services} "
+                f"flet={self._package_version('flet')} "
+                f"flet-web={self._package_version('flet-web')}"
             )
         if self.page:
             self.page.update()
