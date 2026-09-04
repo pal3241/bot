@@ -11,10 +11,15 @@ _ACTION_TAG_RE = re.compile(
     flags=re.IGNORECASE | re.DOTALL,
 )
 _ACTION_TOOL_RE = re.compile(r"[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+")
+_TIME_UNIT_RE = (
+    r"detik|second|seconds|menit|minute|minutes|jam|hour|hours|hari|day|days"
+)
 _SCHEDULE_HINT_RE = re.compile(
     r"\b(?:"
-    r"\d+(?:[.,]\d+)?\s*(?:detik|second|seconds|menit|minute|minutes|jam|hour|hours|hari|day|days)\s+lagi"
-    r"|dalam\s+\d+(?:[.,]\d+)?\s*(?:detik|second|seconds|menit|minute|minutes|jam|hour|hours|hari|day|days)"
+    r"\d+(?:[.,]\d+)?\s*(?:" + _TIME_UNIT_RE + r")\s+lagi"
+    r"|dalam\s+\d+(?:[.,]\d+)?\s*(?:" + _TIME_UNIT_RE + r")"
+    r"|tunggu\s+\d+(?:[.,]\d+)?\s*(?:" + _TIME_UNIT_RE + r")"
+    r"|(?:setelah|sesudah)\s+\d+(?:[.,]\d+)?\s*(?:" + _TIME_UNIT_RE + r")"
     r"|nanti|besok|lusa|setiap|tiap"
     r"|jam\s+\d{1,2}(?::\d{2})?"
     r")\b",
@@ -29,6 +34,34 @@ _VOLUME_RE = re.compile(
     r"^(?:set\s+)?(?:volume|vol|suara)(?:\s+(?:musik|lagu))?\s*(?:ke\s*)?"
     r"(\d{1,3})(?:\s*(?:%|persen|percent))?\s*$",
     flags=re.IGNORECASE,
+)
+_RELATIVE_MUSIC_SCHEDULE_PATTERNS = (
+    re.compile(
+        r"^(?:tolong\s+)?tunggu\s+(?P<amount>\d+(?:[.,]\d+)?)\s*"
+        r"(?P<unit>" + _TIME_UNIT_RE + r")\s*(?:lalu|kemudian)?\s*"
+        r"(?:tolong\s+)?(?:putar(?:kan)?|play|mainkan)\s+"
+        r"(?:(?:musik|lagu|track)\s+)?(?P<query>.+?)\s*$",
+        flags=re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?P<amount>\d+(?:[.,]\d+)?)\s*(?P<unit>" + _TIME_UNIT_RE + r")\s+lagi\s+"
+        r"(?:tolong\s+)?(?:putar(?:kan)?|play|mainkan)\s+"
+        r"(?:(?:musik|lagu|track)\s+)?(?P<query>.+?)\s*$",
+        flags=re.IGNORECASE,
+    ),
+    re.compile(
+        r"^dalam\s+(?P<amount>\d+(?:[.,]\d+)?)\s*(?P<unit>" + _TIME_UNIT_RE + r")\s+"
+        r"(?:tolong\s+)?(?:putar(?:kan)?|play|mainkan)\s+"
+        r"(?:(?:musik|lagu|track)\s+)?(?P<query>.+?)\s*$",
+        flags=re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?:setelah|sesudah)\s+(?P<amount>\d+(?:[.,]\d+)?)\s*"
+        r"(?P<unit>" + _TIME_UNIT_RE + r")\s+(?:tolong\s+)?"
+        r"(?:putar(?:kan)?|play|mainkan)\s+"
+        r"(?:(?:musik|lagu|track)\s+)?(?P<query>.+?)\s*$",
+        flags=re.IGNORECASE,
+    ),
 )
 
 
@@ -112,11 +145,67 @@ def _clean_command_text(text: str) -> str:
     return clean.strip()
 
 
+def _delay_seconds(amount_text: str, unit_text: str) -> float | None:
+    try:
+        amount = float(amount_text.replace(",", "."))
+    except ValueError:
+        return None
+    if amount <= 0:
+        return None
+
+    unit = unit_text.casefold()
+    multiplier = 1.0
+    if unit in {"menit", "minute", "minutes"}:
+        multiplier = 60.0
+    elif unit in {"jam", "hour", "hours"}:
+        multiplier = 3600.0
+    elif unit in {"hari", "day", "days"}:
+        multiplier = 86400.0
+    seconds = amount * multiplier
+    return int(seconds) if seconds.is_integer() else seconds
+
+
+def infer_relative_music_schedule_from_text(text: str) -> tuple[ActionRequest, ...]:
+    """Parse obvious relative-time music schedules without relying on the LLM.
+
+    Examples:
+    - tunggu 30 detik lalu putar <URL>
+    - 20 detik lagi putar Idol
+    - dalam 5 menit play <URL>
+    - setelah 1 jam mainkan lagu X
+    """
+    clean = _clean_command_text(text)
+    if not clean:
+        return ()
+
+    for pattern in _RELATIVE_MUSIC_SCHEDULE_PATTERNS:
+        match = pattern.match(clean)
+        if match is None:
+            continue
+        delay_seconds = _delay_seconds(match.group("amount"), match.group("unit"))
+        query = match.group("query").strip()
+        if delay_seconds is None or not query:
+            return ()
+        return (
+            ActionRequest(
+                "schedule.create",
+                {
+                    "job_type": "music.play",
+                    "job_arguments": {"query": query},
+                    "delay_seconds": delay_seconds,
+                },
+            ),
+        )
+    return ()
+
+
 def looks_like_music_request(text: str) -> bool:
     clean = _clean_command_text(text)
     normalized = clean.casefold()
     if not normalized:
         return False
+    if infer_relative_music_schedule_from_text(clean):
+        return True
     if _PLAY_RE.match(clean) is not None or _VOLUME_RE.match(clean) is not None:
         return True
     if any(word in normalized for word in _MUSIC_WORDS):
@@ -135,14 +224,15 @@ def looks_like_music_request(text: str) -> bool:
 
 
 def infer_safe_actions_from_text(text: str) -> tuple[ActionRequest, ...]:
-    """Deterministic fallback for obvious actions when the planner returns none.
-
-    Scheduled requests are intentionally not converted into immediate music actions.
-    """
+    """Deterministic fallback for obvious actions when the planner returns none."""
     clean = _clean_command_text(text)
     normalized = clean.casefold()
     if not normalized:
         return ()
+
+    scheduled_music = infer_relative_music_schedule_from_text(clean)
+    if scheduled_music:
+        return scheduled_music
 
     mentions_voice = any(word in normalized for word in _VOICE_WORDS)
     if mentions_voice and any(word in normalized for word in _LEAVE_VERBS):
@@ -153,8 +243,8 @@ def infer_safe_actions_from_text(text: str) -> tuple[ActionRequest, ...]:
     if any(phrase in normalized for phrase in ("masuk sini", "join sini", "ikut sini")):
         return (ActionRequest("voice.join_user", {}),)
 
-    # Never turn a delayed request into immediate playback. The LLM must create
-    # schedule.create for these commands.
+    # Other delayed/clock-based requests are left to the LLM planner. Never convert
+    # them into an immediate music action by accident.
     if _SCHEDULE_HINT_RE.search(clean) is not None:
         return ()
 
@@ -227,16 +317,17 @@ def action_response_instruction(tool_descriptions: str) -> str:
         "tag <@123> bilang jangan lupa tugas' schedules discord.message with message='jangan "
         "lupa tugas' and mention_user_id=123. Universal scheduling can target another feature "
         "ONLY when that job_type appears in schedule.create's registered job-type catalog. "
-        "For music, '20 detik lagi putar Yoasobi Idol' MUST use schedule.create with "
-        "job_type='music.play', job_arguments={'query':'Yoasobi Idol'}, and delay_seconds=20. "
-        "Do not also execute music.play immediately for a delayed request. The scheduler will "
-        "capture the speaker's current voice channel when music.play is scheduled. Never invent "
-        "an unavailable scheduled job_type. Requests such as 'jadwal gue apa' use schedule.list, "
-        "and 'hapus schedule 7' uses schedule.cancel with schedule_id=7. Preserve the intended "
-        "delayed action payload, not the scheduling instruction itself. Do not claim an action "
-        "succeeded in text before execution; prefer a short acknowledgement such as 'oke' or "
-        "'gue coba'. Never output <action> tags, XML-like action syntax, action JSON, or tool "
-        "metadata in visible text. Actions belong ONLY in the top-level JSON 'actions' array. "
-        "Maximum 4 actions per response and preserve the user's requested order. Available tools:\n"
+        "For music, '20 detik lagi putar Yoasobi Idol' or 'tunggu 30 detik lalu putar <URL>' "
+        "MUST use schedule.create with job_type='music.play', job_arguments containing the exact "
+        "query/title/URL, and delay_seconds converted to seconds. Do not also execute music.play "
+        "immediately for a delayed request. The scheduler will capture the speaker's current "
+        "voice channel when music.play is scheduled. Never invent an unavailable scheduled "
+        "job_type. Requests such as 'jadwal gue apa' use schedule.list, and 'hapus schedule 7' "
+        "uses schedule.cancel with schedule_id=7. Preserve the intended delayed action payload, "
+        "not the scheduling instruction itself. Do not claim an action succeeded in text before "
+        "execution; prefer a short acknowledgement such as 'oke' or 'gue coba'. Never output "
+        "<action> tags, XML-like action syntax, action JSON, or tool metadata in visible text. "
+        "Actions belong ONLY in the top-level JSON 'actions' array. Maximum 4 actions per "
+        "response and preserve the user's requested order. Available tools:\n"
         + tool_descriptions
     )
