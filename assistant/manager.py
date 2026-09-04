@@ -155,7 +155,11 @@ class AssistantManager:
 
         async with session.lock:
             identity = self.owner_resolver.resolve(user_id, clean_name)
-            memory_enabled = identity.is_owner and source == "discord_text"
+
+            # Long-term memory is per Discord user ID and intentionally independent of
+            # channel/server session history. This lets the same user be recognized in
+            # another channel while preserving strict user-to-user isolation.
+            memory_enabled = source == "discord_text"
             memories: list[MemoryRecord] = []
             memory_started = time.monotonic()
             if memory_enabled:
@@ -163,8 +167,8 @@ class AssistantManager:
                     memories = await self.memory.retrieve(identity, clean_text)
                 except (OSError, RuntimeError, aiosqlite.Error) as error:
                     print(
-                        f"[SENA MEMORY] retrieval failed type={type(error).__name__} "
-                        f"detail={error}"
+                        f"[SENA MEMORY] retrieval failed user={identity.user_id} "
+                        f"type={type(error).__name__} detail={error}"
                     )
             memory_seconds = time.monotonic() - memory_started
 
@@ -182,7 +186,7 @@ class AssistantManager:
                 parse_explicit_memory_command(clean_text) if memory_enabled else None
             )
             system_prompt += "\n" + (
-                structured_response_instruction()
+                structured_response_instruction(identity)
                 if memory_enabled
                 else "Set the structured response memory field to null."
             )
@@ -233,7 +237,8 @@ class AssistantManager:
                     aiosqlite.Error,
                 ) as error:
                     print(
-                        f"[SENA MEMORY] write failed action={candidate.action.value} "
+                        f"[SENA MEMORY] write failed user={identity.user_id} "
+                        f"action={candidate.action.value} "
                         f"type={type(error).__name__} detail={error}"
                     )
 
