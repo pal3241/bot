@@ -111,9 +111,17 @@ class MusicResolver:
 
     def _stream_format_selector(self) -> str:
         profile = self.settings.stream_profile
+        if profile == "data_saver":
+            return (
+                "bestaudio[abr<=48]/bestaudio[abr<=64]/"
+                "bestaudio[abr<=96]/bestaudio/best"
+            )
+        if profile == "ultra_low":
+            return (
+                "bestaudio[abr<=64]/bestaudio[abr<=80]/"
+                "bestaudio[abr<=96]/bestaudio/best"
+            )
         if profile == "low":
-            # YouTube commonly exposes Opus audio around 50-80 kbps. Prefer <=96 kbps,
-            # then <=128 kbps before falling back to any audio-only stream.
             return "bestaudio[abr<=96]/bestaudio[abr<=128]/bestaudio/best"
         if profile == "balanced":
             return "bestaudio[abr<=128]/bestaudio[abr<=160]/bestaudio/best"
