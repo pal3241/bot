@@ -11,3 +11,4 @@ data/stt_settings.json
 data/sena_memory.db
 data/sena_memory.db-shm
 data/sena_memory.db-wal
+config/music.json
