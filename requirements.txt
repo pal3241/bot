@@ -5,10 +5,11 @@ gTTS>=2.5,<3
 python-dotenv>=1.1,<2
 aiosqlite>=0.21,<1
 
-# Flet 0.86+ dipakai karena FilePicker web dapat membaca file browser sebagai bytes
-# (with_data=True), sehingga multi-file emoji upload tidak membutuhkan SFTP/path lokal.
-flet>=0.86,<0.87
-flet-web>=0.86,<0.87
+# Pin Flet server + compiled web client ke versi yang sama. FilePicker pada
+# Flet modern adalah Service (page.services), bukan overlay control. Exact pins
+# mencegah Python runtime dan browser client drift ke versi yang tidak cocok.
+flet==0.86.5
+flet-web==0.86.5
 
 # Native Discord voice dependencies. Android/Termux menjalankan degraded mode
 # dan melewati dependency ini supaya kegagalan voice tidak memblokir bot utama.
