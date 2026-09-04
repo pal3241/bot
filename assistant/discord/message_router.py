@@ -5,7 +5,10 @@ import discord
 
 from actions.executor import ActionExecutor
 from actions.models import ActionResult
-from actions.parser import looks_like_music_request
+from actions.parser import (
+    infer_relative_music_schedule_from_text,
+    looks_like_music_request,
+)
 from actions.registry import ActionContext
 from assistant.conversation import ConversationKey, build_conversation_key
 from assistant.discord.message_classifier import MessageAction, MessageDecision, MessageFacts, SessionCommand, classify_message
@@ -159,6 +162,7 @@ class DiscordMessageRouter:
         started = monotonic()
         cleaned_request = decision.cleaned_text or ""
         music_requested = looks_like_music_request(cleaned_request)
+        deterministic_schedule = infer_relative_music_schedule_from_text(cleaned_request)
         try:
             async with message.channel.typing():
                 response = await self._assistant.chat(
@@ -170,10 +174,16 @@ class DiscordMessageRouter:
                     "discord_text",
                 )
                 action_results: tuple[ActionResult, ...] = ()
-                if response.actions and self._action_executor is not None:
+                actions_to_execute = deterministic_schedule or response.actions
+                if deterministic_schedule:
+                    print(
+                        "[SENA ACTION] deterministic schedule tools="
+                        + ",".join(action.tool for action in deterministic_schedule)
+                    )
+                if actions_to_execute and self._action_executor is not None:
                     action_results = await self._action_executor.execute(
                         ActionContext(self._client, message, is_owner),
-                        response.actions,
+                        actions_to_execute,
                     )
 
             assistant_done = monotonic()
@@ -182,7 +192,7 @@ class DiscordMessageRouter:
             successes = [result for result in action_results if result.succeeded]
 
             # Runtime executor results are authoritative. Never preserve a pre-execution
-            # LLM success claim for music when the action failed or never ran.
+            # LLM success claim for music/schedule when the action failed or never ran.
             schedule_text = _schedule_result_text(tuple(action_results))
             music_text = _music_result_text(tuple(action_results))
             music_failure = _music_failure_text(tuple(action_results))
@@ -216,12 +226,13 @@ class DiscordMessageRouter:
 
             await self._reply(message, text, response.expression, is_owner, key)
             finished = monotonic()
+            executed_count = len(deterministic_schedule or response.actions)
             print(
                 f"[SENA PERF] discord channel={message.channel.id} "
                 f"assistant={assistant_done-started:.3f}s "
                 f"send={finished-assistant_done:.3f}s "
                 f"end_to_end={finished-started:.3f}s "
-                f"actions={len(response.actions)}"
+                f"actions={executed_count}"
             )
         except LLMProviderError as error:
             print(f"[SENA] provider error type={type(error).__name__} detail={error}")
