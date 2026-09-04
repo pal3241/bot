@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -89,36 +90,44 @@ def _current_time_context() -> str:
     )
 
 
-_ACTION_HINTS = (
-    "vc",
-    "voice",
-    "join",
-    "masuk",
-    "keluar",
-    "leave",
-    "musik",
-    "music",
-    "lagu",
-    "track",
-    "play",
-    "putar",
-    "pause",
-    "resume",
-    "skip",
-    "volume",
-    "queue",
-    "antrian",
-    "jadwal",
-    "schedule",
-    "remind",
-    "ingatkan",
-    "timer",
-    "nanti",
-    "besok",
-    "lusa",
+_ACTION_WORDS = frozenset(
+    {
+        "vc",
+        "voice",
+        "join",
+        "masuk",
+        "keluar",
+        "leave",
+        "musik",
+        "music",
+        "lagu",
+        "track",
+        "play",
+        "putar",
+        "putarkan",
+        "mainkan",
+        "pause",
+        "resume",
+        "skip",
+        "volume",
+        "queue",
+        "antrian",
+        "jadwal",
+        "schedule",
+        "remind",
+        "ingatkan",
+        "timer",
+        "nanti",
+        "besok",
+        "lusa",
+        "mention",
+    }
+)
+_ACTION_PHRASES = (
     "kirim pesan",
     "tag ",
-    "mention",
+    "hapus jadwal",
+    "daftar jadwal",
 )
 _TIME_HINTS = (
     "jam berapa",
@@ -139,7 +148,10 @@ _TIME_HINTS = (
 
 def _looks_like_action_request(text: str) -> bool:
     normalized = " ".join(text.casefold().split())
-    return any(hint in normalized for hint in _ACTION_HINTS)
+    words = set(re.findall(r"[a-z0-9_]+", normalized))
+    return bool(words & _ACTION_WORDS) or any(
+        phrase in normalized for phrase in _ACTION_PHRASES
+    )
 
 
 def _needs_time_context(text: str) -> bool:
