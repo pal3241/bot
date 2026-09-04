@@ -5,8 +5,8 @@ from typing import Any
 import flet as ft
 
 from core.feature_loader import feature_health_summary
+from core.runtime_log import RUNTIME_LOGS
 from ui.flet_app import (
-    BORDER,
     MUTED,
     TEXT,
     WEB_PORT,
@@ -15,21 +15,16 @@ from ui.flet_app import (
 
 
 class SenaFletUI(_BaseSenaFletUI):
-    """Flet UI with a log-first Settings layout.
-
-    The original Settings page placed four runtime cards before the log viewer.
-    On narrow phone screens those cards stack vertically, making the log panel
-    look missing even though it exists farther down the scroll view.
-    """
+    """Flet UI with a log-first Settings layout and startup log history."""
 
     def _log_text(self) -> str:
-        with self._log_lock:
-            if self._logs:
-                return "\n".join(self._logs)
+        lines = RUNTIME_LOGS.snapshot()
+        if lines:
+            return "\n".join(lines)
         return (
-            "[SENA UI] Belum ada runtime log baru.\n"
-            "Log akan muncul otomatis saat Sena menerima event, request AI, "
-            "action, warning, atau error."
+            "[SENA UI] Belum ada runtime log.\n"
+            "Log startup, feature loader, AI, action, warning, dan error akan "
+            "muncul otomatis di sini."
         )
 
     async def _refresh_logs(self, e: Any = None) -> None:
@@ -40,6 +35,7 @@ class SenaFletUI(_BaseSenaFletUI):
 
     async def _clear_logs(self, e: Any) -> None:
         del e
+        RUNTIME_LOGS.clear()
         with self._log_lock:
             self._logs.clear()
         self.log_view.value = self._log_text()
@@ -71,7 +67,7 @@ class SenaFletUI(_BaseSenaFletUI):
                                 weight=ft.FontWeight.W_600,
                             ),
                             ft.Text(
-                                "Auto-refresh setiap 0.8 detik saat halaman ini dibuka",
+                                "Startup + runtime · auto-refresh 0.8 detik",
                                 color=MUTED,
                                 size=10,
                             ),
