@@ -14,6 +14,7 @@ from music.models import MusicSnapshot, MusicTrack
 from music.resolver import MusicResolver
 from music.settings import (
     MusicSettings,
+    discord_bitrate_kbps,
     load_music_settings,
     normalize_settings,
     save_music_settings,
@@ -59,7 +60,8 @@ class MusicManager:
         return (
             f"resolver={'ok' if yt_dlp_ok else 'missing-yt-dlp'} "
             f"ffmpeg={'ok' if ffmpeg_ok else 'missing'} "
-            f"voice=runtime"
+            f"voice=runtime profile={self.settings.stream_profile} "
+            f"discord_opus={discord_bitrate_kbps(self.settings.stream_profile)}kbps"
         )
 
     def attach_scheduler(self, scheduler: SchedulerManager) -> None:
@@ -78,6 +80,17 @@ class MusicManager:
             state = _GuildMusicState(volume=self.settings.default_volume_percent / 100.0)
             self._states[guild_id] = state
         return state
+
+    def _discord_encoder_options(self) -> dict[str, object]:
+        profile = self.settings.stream_profile
+        expected_packet_loss = 0.25 if profile in {"data_saver", "ultra_low"} else 0.20 if profile == "low" else 0.15
+        return {
+            "bitrate": discord_bitrate_kbps(profile),
+            "fec": True,
+            "expected_packet_loss": expected_packet_loss,
+            "bandwidth": "full",
+            "signal_type": "music",
+        }
 
     async def apply_settings(self, settings: MusicSettings) -> MusicSettings:
         normalized = normalize_settings(settings)
@@ -209,10 +222,15 @@ class MusicManager:
 
                 future.add_done_callback(consume_result)
 
+            encoder_options = self._discord_encoder_options()
             try:
                 state.current = track
                 state.stop_requested = False
-                voice.play(transformed, after=after_playback)
+                voice.play(
+                    transformed,
+                    after=after_playback,
+                    **encoder_options,
+                )
             except Exception:
                 state.current = None
                 try:
@@ -222,7 +240,9 @@ class MusicManager:
                 raise
             print(
                 f"[SENA MUSIC] playing guild={guild_id} platform={track.platform} "
-                f"title={track.title!r} queue={len(state.queue)} volume={int(state.volume*100)}"
+                f"title={track.title!r} queue={len(state.queue)} volume={int(state.volume*100)} "
+                f"profile={self.settings.stream_profile} "
+                f"discord_opus={encoder_options['bitrate']}kbps"
             )
             return
 
