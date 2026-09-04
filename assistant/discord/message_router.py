@@ -4,9 +4,10 @@ from time import monotonic
 import discord
 
 from actions.executor import ActionExecutor
-from actions.models import ActionResult
+from actions.models import ActionRequest, ActionResult
 from actions.parser import (
     infer_relative_music_schedule_from_text,
+    infer_safe_actions_from_text,
     looks_like_music_request,
 )
 from actions.registry import ActionContext
@@ -81,6 +82,92 @@ def _music_failure_text(results: tuple[ActionResult, ...]) -> str:
         return ""
     detail = "; ".join(f"{item.tool}: {item.detail}" for item in failures)
     return f"Music gagal dijalankan: {detail}"
+
+
+_DIRECT_ACTION_STARTS = (
+    "join ",
+    "masuk ",
+    "ikut ",
+    "gabung ",
+    "connect ",
+    "leave",
+    "keluar",
+    "cabut",
+    "disconnect",
+    "putar ",
+    "putarkan ",
+    "play ",
+    "mainkan ",
+    "pause",
+    "jeda",
+    "resume",
+    "lanjut",
+    "skip",
+    "next",
+    "stop",
+    "volume",
+    "vol ",
+    "queue",
+    "antrian",
+    "tunggu ",
+    "dalam ",
+    "setelah ",
+    "sesudah ",
+)
+_QUESTION_HINTS = (
+    "kenapa",
+    "mengapa",
+    "gimana",
+    "bagaimana",
+    "apakah",
+    "kok ",
+    "bisa gak",
+    "bisa nggak",
+    "bisa tidak",
+)
+
+
+def _can_fast_execute(text: str, actions: tuple[ActionRequest, ...]) -> bool:
+    """Use the zero-LLM path only for short, obvious imperative commands.
+
+    The deterministic parser intentionally accepts fairly natural wording as a
+    fallback. This stricter gate prevents questions such as "kenapa gak join vc?"
+    from being treated as commands merely because they contain action keywords.
+    """
+    if not actions or len(actions) > 2:
+        return False
+    clean = re.sub(r"\s+", " ", text.strip()).casefold()
+    if not clean or len(clean) > 240 or "?" in clean:
+        return False
+    if any(hint in clean for hint in _QUESTION_HINTS):
+        return False
+
+    # Relative music scheduling is fully anchored by its deterministic parser.
+    if infer_relative_music_schedule_from_text(clean):
+        return True
+
+    if clean.startswith("tolong "):
+        clean = clean[7:].lstrip()
+    return clean.startswith(_DIRECT_ACTION_STARTS)
+
+
+def _fast_action_result_text(results: tuple[ActionResult, ...], is_owner: bool) -> str:
+    schedule_text = _schedule_result_text(results)
+    if schedule_text:
+        return schedule_text
+    music_text = _music_result_text(results)
+    if music_text:
+        return music_text
+    music_failure = _music_failure_text(results)
+    if music_failure:
+        return music_failure
+
+    failures = [result for result in results if not result.succeeded]
+    if failures:
+        detail = "; ".join(f"{item.tool}: {item.detail}" for item in failures)
+        return f"Action gagal: {detail}"
+
+    return _action_success_ack(results, is_owner) or "Selesai."
 
 
 class DiscordMessageRouter:
@@ -162,6 +249,43 @@ class DiscordMessageRouter:
         started = monotonic()
         cleaned_request = decision.cleaned_text or ""
         music_requested = looks_like_music_request(cleaned_request)
+        deterministic_actions = infer_safe_actions_from_text(cleaned_request)
+
+        # Fast path: safe, explicit commands do not need the remote LLM at all.
+        # The executor remains authoritative for permissions, capability checks,
+        # and success/failure reporting.
+        if (
+            self._action_executor is not None
+            and deterministic_actions
+            and _can_fast_execute(cleaned_request, deterministic_actions)
+        ):
+            try:
+                async with message.channel.typing():
+                    action_started = monotonic()
+                    action_results = await self._action_executor.execute(
+                        ActionContext(self._client, message, is_owner),
+                        deterministic_actions,
+                    )
+                    action_done = monotonic()
+                text = _fast_action_result_text(action_results, is_owner)
+                await self._reply(message, text, DEFAULT_EXPRESSION, is_owner, key)
+                finished = monotonic()
+                print(
+                    f"[SENA PERF] discord channel={message.channel.id} "
+                    f"fast_path=action llm=0.000s "
+                    f"action={action_done-action_started:.3f}s "
+                    f"send={finished-action_done:.3f}s "
+                    f"end_to_end={finished-started:.3f}s "
+                    f"actions={len(deterministic_actions)}"
+                )
+                return
+            except Exception as error:
+                # A fast-path implementation error must not kill normal chat.
+                print(
+                    f"[SENA ACTION] fast path failed type={type(error).__name__} "
+                    f"detail={error}; fallback=assistant"
+                )
+
         deterministic_schedule = infer_relative_music_schedule_from_text(cleaned_request)
         try:
             async with message.channel.typing():
@@ -229,7 +353,7 @@ class DiscordMessageRouter:
             executed_count = len(deterministic_schedule or response.actions)
             print(
                 f"[SENA PERF] discord channel={message.channel.id} "
-                f"assistant={assistant_done-started:.3f}s "
+                f"fast_path=no assistant={assistant_done-started:.3f}s "
                 f"send={finished-assistant_done:.3f}s "
                 f"end_to_end={finished-started:.3f}s "
                 f"actions={executed_count}"
