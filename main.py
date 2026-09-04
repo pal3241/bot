@@ -61,6 +61,10 @@ async def main_menu(
                 f"Scheduler{' ':<15} "
                 f"{'ENABLED' if ctx.scheduler is not None and ctx.scheduler.available else 'DISABLED'}"
             )
+            print(
+                f"Music{' ':<19} "
+                f"{'ENABLED' if ctx.music is not None and ctx.music.available else 'DISABLED'}"
+            )
             continue
         try:
             index = int(pilihan) - 1
@@ -126,10 +130,31 @@ def _build_scheduler_safely(client: discord.Client) -> Any | None:
     return scheduler
 
 
+def _build_music_safely(
+    client: discord.Client,
+    scheduler: Any | None,
+) -> Any | None:
+    try:
+        from music import MusicManager
+
+        music = MusicManager(client, Path("config/music.json"))
+        if scheduler is not None:
+            music.attach_scheduler(scheduler)
+    except Exception as error:
+        print(
+            f"[SUBSYSTEM] Music: DISABLED "
+            f"({type(error).__name__}: {error})"
+        )
+        return None
+    print(f"[SUBSYSTEM] Music: CREATED {music.backend_status()}")
+    return music
+
+
 def _build_router_safely(
     client: discord.Client,
     assistant: Any | None,
     scheduler: Any | None,
+    music: Any | None,
 ) -> tuple[Any | None, Any | None, Any | None]:
     if assistant is None:
         print("[SUBSYSTEM] Discord AI Router: SKIPPED (AI Assistant unavailable)")
@@ -144,7 +169,7 @@ def _build_router_safely(
             Path("config/expressions.json"),
             Path("assets/expressions/gifs"),
         )
-        action_executor = build_action_executor(scheduler)
+        action_executor = build_action_executor(scheduler, music)
         assistant.attach_action_registry(action_executor.registry)
         router = DiscordMessageRouter(
             client,
@@ -226,17 +251,20 @@ async def run(token: str) -> None:
 
     assistant = await _build_assistant_safely()
     scheduler = _build_scheduler_safely(client)
+    music = _build_music_safely(client, scheduler)
     ctx = AppContext(
         client=client,
         assistant=assistant,
         device=device,
         scheduler=scheduler,
+        music=music,
     )
     message_display = _load_message_display(feature_results)
     message_router, expression_service, action_executor = _build_router_safely(
         client,
         assistant,
         scheduler,
+        music,
     )
     runtime_status = _build_runtime_status(
         assistant,
@@ -288,6 +316,15 @@ async def run(token: str) -> None:
                 "Discord client siap tetapi identitas bot tidak tersedia."
             )
 
+        if music is not None:
+            try:
+                await music.start()
+            except Exception as error:
+                print(
+                    f"[SUBSYSTEM] Music start gagal: "
+                    f"{type(error).__name__}: {error}; bot tetap berjalan"
+                )
+
         if scheduler is not None:
             try:
                 await scheduler.start()
@@ -318,6 +355,10 @@ async def run(token: str) -> None:
         print(
             f"Scheduler: {'ONLINE' if scheduler is not None and scheduler.available else 'OFFLINE'}"
         )
+        print(
+            f"Music    : {'ONLINE' if music is not None and music.available else 'OFFLINE'}"
+            + (f" · {music.backend_status()}" if music is not None else "")
+        )
 
         flet_ui = _build_flet_ui_safely(
             ctx,
@@ -346,6 +387,14 @@ async def run(token: str) -> None:
             except Exception as error:
                 print(
                     f"[SHUTDOWN] Scheduler close gagal: "
+                    f"{type(error).__name__}: {error}"
+                )
+        if music is not None:
+            try:
+                await music.close()
+            except Exception as error:
+                print(
+                    f"[SHUTDOWN] Music close gagal: "
                     f"{type(error).__name__}: {error}"
                 )
         if assistant is not None:
