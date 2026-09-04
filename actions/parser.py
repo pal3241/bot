@@ -84,6 +84,7 @@ def parse_action_response(raw: str) -> tuple[ActionRequest, ...]:
 _JOIN_VERBS = ("join", "masuk", "sini", "ikut", "datang", "gabung", "connect")
 _LEAVE_VERBS = ("leave", "keluar", "cabut", "disconnect")
 _VOICE_WORDS = ("vc", "voice", "voice channel", "suara")
+_MUSIC_WORDS = ("musik", "music", "lagu", "track")
 
 
 def infer_safe_actions_from_text(text: str) -> tuple[ActionRequest, ...]:
@@ -100,6 +101,17 @@ def infer_safe_actions_from_text(text: str) -> tuple[ActionRequest, ...]:
 
     if any(phrase in normalized for phrase in ("masuk sini", "join sini", "ikut sini")):
         return (ActionRequest("voice.join_user", {}),)
+
+    mentions_music = any(word in normalized for word in _MUSIC_WORDS)
+    if mentions_music:
+        if any(word in normalized for word in ("pause", "jeda")):
+            return (ActionRequest("music.pause", {}),)
+        if any(word in normalized for word in ("resume", "lanjutkan", "lanjut lagi")):
+            return (ActionRequest("music.resume", {}),)
+        if any(word in normalized for word in ("skip", "next", "lewati")):
+            return (ActionRequest("music.skip", {}),)
+        if any(phrase in normalized for phrase in ("stop musik", "stop lagu", "matikan musik", "berhenti musik")):
+            return (ActionRequest("music.stop", {}),)
     return ()
 
 
@@ -112,22 +124,27 @@ def action_response_instruction(tool_descriptions: str) -> str:
         "'join vc sini', 'masuk vc gue', 'ikut ke voice', and equivalent wording MUST produce "
         "voice.join_user rather than actions=[]. Resolve words such as here/sini using the "
         "current Discord context when a tool supports it. "
+        "Music requests map directly to the music tools: 'putar Idol', 'play <URL>', or "
+        "'putar lagu Yoasobi' uses music.play with query containing only the title/search/URL; "
+        "'pause musik' uses music.pause; 'lanjutkan musik' uses music.resume; 'skip lagu' uses "
+        "music.skip; 'stop musik' uses music.stop; 'volume 50 persen' uses music.volume with "
+        "percent=50; and 'queue musik' uses music.queue. Do not rewrite a supplied media URL. "
         "Scheduling requests MUST use schedule.create instead of merely promising to do it. "
         "For a scheduled Discord message, use job_type='discord.message' (or omit job_type), "
         "message, run_at or delay_seconds, and optional mention_user_id. Example: 'jam 8 malam "
         "tag <@123> bilang jangan lupa tugas' schedules discord.message with message='jangan "
         "lupa tugas' and mention_user_id=123. Universal scheduling can target another feature "
         "ONLY when that job_type appears in schedule.create's registered job-type catalog. "
-        "For example, once music.play is registered, '20 detik lagi putar Yoasobi Idol' MUST "
-        "use schedule.create with job_type='music.play', job_arguments={'query':'Yoasobi Idol'}, "
-        "and delay_seconds=20, rather than executing music.play immediately or merely promising. "
-        "Never invent an unavailable scheduled job_type. Requests such as 'jadwal gue apa' use "
-        "schedule.list, and 'hapus schedule 7' uses schedule.cancel with schedule_id=7. Preserve "
-        "the intended delayed action payload, not the scheduling instruction itself. "
-        "Do not claim an action succeeded in text before execution; prefer a short "
-        "acknowledgement such as 'oke' or 'gue coba'. Never output <action> tags, XML-like "
-        "action syntax, action JSON, or tool metadata in visible text. Actions belong ONLY in "
-        "the top-level JSON 'actions' array. Maximum 4 actions per response and preserve the "
-        "user's requested order. Available tools:\n"
+        "For music, '20 detik lagi putar Yoasobi Idol' MUST use schedule.create with "
+        "job_type='music.play', job_arguments={'query':'Yoasobi Idol'}, and delay_seconds=20. "
+        "Do not also execute music.play immediately for a delayed request. The scheduler will "
+        "capture the speaker's current voice channel when music.play is scheduled. Never invent "
+        "an unavailable scheduled job_type. Requests such as 'jadwal gue apa' use schedule.list, "
+        "and 'hapus schedule 7' uses schedule.cancel with schedule_id=7. Preserve the intended "
+        "delayed action payload, not the scheduling instruction itself. Do not claim an action "
+        "succeeded in text before execution; prefer a short acknowledgement such as 'oke' or "
+        "'gue coba'. Never output <action> tags, XML-like action syntax, action JSON, or tool "
+        "metadata in visible text. Actions belong ONLY in the top-level JSON 'actions' array. "
+        "Maximum 4 actions per response and preserve the user's requested order. Available tools:\n"
         + tool_descriptions
     )
