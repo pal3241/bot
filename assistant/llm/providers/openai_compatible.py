@@ -115,12 +115,17 @@ class OpenAICompatibleProvider(LLMProvider):
         print(f"[SENA] request started provider={self._provider_name} model={model}")
         last_error: Exception | None = None
         for attempt in range(1, self._retry_count + 2):
+            attempt_started = monotonic()
             try:
                 session: aiohttp.ClientSession = await self._get_session()
                 async with session.post(
                     self._endpoint, headers=headers, json=payload
                 ) as response:
+                    headers_received = monotonic()
                     body: str = await response.text()
+                    body_received = monotonic()
+                    ttfb_seconds = headers_received - attempt_started
+                    body_seconds = body_received - headers_received
                     if response.status >= 400:
                         error = LLMProviderError(
                             f"{self._provider_name} POST {self._endpoint} gagal: "
@@ -133,7 +138,9 @@ class OpenAICompatibleProvider(LLMProvider):
                         text: str = self._parse_response(body, response.status)
                         print(
                             f"[SENA] request completed provider={self._provider_name} "
-                            f"latency={monotonic() - started:.3f}s response_chars={len(text)}"
+                            f"latency={monotonic() - started:.3f}s "
+                            f"ttfb={ttfb_seconds:.3f}s body={body_seconds:.3f}s "
+                            f"response_chars={len(text)}"
                         )
                         return text
             except (aiohttp.ClientError, asyncio.TimeoutError) as error:
