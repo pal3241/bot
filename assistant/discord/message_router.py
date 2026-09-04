@@ -58,6 +58,15 @@ def _schedule_result_text(results: tuple[ActionResult, ...]) -> str:
     return "\n".join(detail for detail in details if detail.strip())
 
 
+def _music_result_text(results: tuple[ActionResult, ...]) -> str:
+    details = [
+        result.detail
+        for result in results
+        if result.succeeded and result.tool.startswith("music.")
+    ]
+    return "\n".join(detail for detail in details if detail.strip())
+
+
 class DiscordMessageRouter:
     def __init__(self, client: discord.Client, assistant: AssistantManager, expression_sender: DiscordExpressionSender, action_executor: ActionExecutor | None = None) -> None:
         self._client = client
@@ -157,11 +166,15 @@ class DiscordMessageRouter:
             failures = [result for result in action_results if not result.succeeded]
             successes = [result for result in action_results if result.succeeded]
 
-            # Scheduler results are authoritative runtime data. Always show the actual
-            # created/listed/cancelled result instead of trusting pre-execution LLM text.
+            # Runtime executor results are authoritative. Scheduler and music operations
+            # replace pre-execution LLM text so Sena never claims a job/playback state
+            # that did not actually happen.
             schedule_text = _schedule_result_text(tuple(action_results))
+            music_text = _music_result_text(tuple(action_results))
             if schedule_text:
                 text = schedule_text
+            elif music_text:
+                text = music_text
             elif successes and _placeholder_text(text):
                 text = _action_success_ack(tuple(action_results), is_owner)
 
