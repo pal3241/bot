@@ -60,6 +60,7 @@ def install_runtime_log_capture() -> None:
     sys.stdout = _RuntimeTee(sys.stdout)
     sys.stderr = _RuntimeTee(sys.stderr)
     _installed = True
+    RUNTIME_LOGS.append_text("[SENA LOG] runtime capture enabled")
 
 
 def restore_runtime_log_capture() -> None:
@@ -71,3 +72,9 @@ def restore_runtime_log_capture() -> None:
     if _original_stderr is not None:
         sys.stderr = _original_stderr
     _installed = False
+
+
+# Flet imports this module when the control center is built. Start capturing at that
+# point automatically so Settings always receives subsequent runtime logs without a
+# second wrapper/subclass layer.
+install_runtime_log_capture()
