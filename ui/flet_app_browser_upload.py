@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -8,7 +9,6 @@ import flet as ft
 
 from config import MAX_EMOJI_SIZE
 from ui.flet_app import (
-    BORDER,
     ERROR,
     MUTED,
     SUCCESS,
@@ -22,21 +22,12 @@ _ALLOWED_EMOJI_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
 
 
 class SenaFletUI(_BaseSenaFletUI):
-    """Control center with direct browser -> Discord emoji uploads.
-
-    Browser-selected files are requested with ``with_data=True`` and their bytes are
-    sent directly to Discord. No client filesystem path or SFTP step is required.
-    """
+    """Control center with direct browser -> Discord multi-file emoji uploads."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._browser_emoji_files: list[ft.FilePickerFile] = []
-
-        # Keep FilePicker construction argument-free. The Termux Flet build used by
-        # Senna exposes the async pick_files() API but does not expose PickFiles client
-        # actions and does not accept on_result in the constructor.
         self.emoji_file_picker = ft.FilePicker()
-
         self.emoji_browser_files = ft.Text(
             "Belum ada file dipilih.",
             size=11,
@@ -52,22 +43,51 @@ class SenaFletUI(_BaseSenaFletUI):
         )
 
     async def main(self, page: ft.Page) -> None:
+        # Build the normal page first so the Flet web session/control tree is alive,
+        # then register FilePicker as a service and force one synchronization. This is
+        # required by the 0.86 service API before _invoke_method()/pick_files() works.
+        await super().main(page)
         if self.emoji_file_picker not in page.services:
             page.services.append(self.emoji_file_picker)
-        await super().main(page)
+        page.update()
+        await asyncio.sleep(0)
+        print("[SENA UI EMOJI] FilePicker service mounted")
+
+    async def _ensure_file_picker_mounted(self) -> None:
+        page = self.page
+        if page is None:
+            raise RuntimeError("Flet page belum siap.")
+
+        try:
+            _ = self.emoji_file_picker.page
+            return
+        except RuntimeError:
+            pass
+
+        if self.emoji_file_picker not in page.services:
+            page.services.append(self.emoji_file_picker)
+        page.update()
+        await asyncio.sleep(0)
+
+        try:
+            _ = self.emoji_file_picker.page
+        except RuntimeError as error:
+            raise RuntimeError(
+                "FilePicker service belum mounted ke Flet page setelah sync."
+            ) from error
 
     def _format_browser_selection(self) -> str:
         if not self._browser_emoji_files:
             return "Belum ada file dipilih."
         lines: list[str] = []
-        total = 0
+        total_size = 0
         for file in self._browser_emoji_files:
             size = int(file.size or 0)
-            total += size
+            total_size += size
             marker = "OK" if size <= MAX_EMOJI_SIZE else "TERLALU BESAR"
             lines.append(f"• {file.name} · {size / 1024:.1f} KB · {marker}")
         lines.append(
-            f"\n{len(self._browser_emoji_files)} file · total {total / 1024:.1f} KB"
+            f"\n{len(self._browser_emoji_files)} file · total {total_size / 1024:.1f} KB"
         )
         return "\n".join(lines)
 
@@ -75,27 +95,29 @@ class SenaFletUI(_BaseSenaFletUI):
         self._browser_emoji_files = files
         self.emoji_browser_files.value = self._format_browser_selection()
         self.emoji_browser_upload_button.disabled = not bool(files)
-        if files:
-            too_large = sum(
-                1 for file in files if int(file.size or 0) > MAX_EMOJI_SIZE
-            )
-            self.emoji_browser_status.value = (
-                f"Dipilih {len(files)} file"
-                + (
-                    f" · {too_large} akan dilewati karena > "
-                    f"{MAX_EMOJI_SIZE / 1024:.0f} KB"
-                    if too_large
-                    else ""
-                )
-            )
-            self.emoji_browser_status.color = WARNING if too_large else SUCCESS
-        else:
+        if not files:
             self.emoji_browser_status.value = "Pemilihan dibatalkan."
             self.emoji_browser_status.color = MUTED
+            return
+
+        too_large = sum(
+            1 for file in files if int(file.size or 0) > MAX_EMOJI_SIZE
+        )
+        self.emoji_browser_status.value = (
+            f"Dipilih {len(files)} file"
+            + (
+                f" · {too_large} akan dilewati karena > "
+                f"{MAX_EMOJI_SIZE / 1024:.0f} KB"
+                if too_large
+                else ""
+            )
+        )
+        self.emoji_browser_status.color = WARNING if too_large else SUCCESS
 
     async def _emoji_browser_pick_files(self, e: Any) -> None:
         del e
         try:
+            await self._ensure_file_picker_mounted()
             files = await self.emoji_file_picker.pick_files(
                 allow_multiple=True,
                 with_data=True,
@@ -104,7 +126,7 @@ class SenaFletUI(_BaseSenaFletUI):
             )
             self._set_browser_selection(list(files or []))
         except Exception as error:
-            self._browser_emoji_files = []
+            self._browser_emoji_files.clear()
             self.emoji_browser_files.value = "Belum ada file dipilih."
             self.emoji_browser_upload_button.disabled = True
             self.emoji_browser_status.value = (
@@ -151,8 +173,8 @@ class SenaFletUI(_BaseSenaFletUI):
         skipped = 0
         failed = 0
         total = len(self._browser_emoji_files)
-
         self.emoji_browser_upload_button.disabled = True
+
         try:
             for index, file in enumerate(self._browser_emoji_files, start=1):
                 suffix = Path(file.name).suffix.casefold().lstrip(".")
@@ -166,7 +188,7 @@ class SenaFletUI(_BaseSenaFletUI):
                     failed += 1
                     print(
                         f"[SENA UI EMOJI] browser bytes missing file={file.name}; "
-                        "FilePicker must use with_data=True"
+                        "pick_files must use with_data=True"
                     )
                     continue
 
@@ -222,41 +244,40 @@ class SenaFletUI(_BaseSenaFletUI):
             self.page.update()
 
     def _browser_upload_panel(self) -> ft.Control:
-        pick_button = ft.Button(
-            content=ft.Container(
-                height=150 if self._compact else 180,
-                alignment=ft.Alignment.CENTER,
-                content=ft.Column(
-                    controls=[
-                        ft.Icon(
-                            ft.Icons.CLOUD_UPLOAD_OUTLINED,
-                            size=38,
-                            color="#BDBDBD",
-                        ),
-                        ft.Text(
-                            "Pilih banyak emoji dari laptop",
-                            color=TEXT,
-                            weight=ft.FontWeight.W_600,
-                            size=15,
-                        ),
-                        ft.Text(
-                            "PNG · JPG · GIF · WEBP  |  multi-select aktif",
-                            color=MUTED,
-                            size=10,
-                        ),
-                    ],
-                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                    alignment=ft.MainAxisAlignment.CENTER,
-                    spacing=7,
-                ),
-            ),
-            on_click=self._emoji_browser_pick_files,
-            expand=True,
-        )
         return self._panel(
             ft.Column(
                 controls=[
-                    pick_button,
+                    ft.Button(
+                        content=ft.Container(
+                            height=150 if self._compact else 180,
+                            alignment=ft.Alignment.CENTER,
+                            content=ft.Column(
+                                controls=[
+                                    ft.Icon(
+                                        ft.Icons.CLOUD_UPLOAD_OUTLINED,
+                                        size=38,
+                                        color="#BDBDBD",
+                                    ),
+                                    ft.Text(
+                                        "Pilih banyak emoji dari laptop",
+                                        color=TEXT,
+                                        weight=ft.FontWeight.W_600,
+                                        size=15,
+                                    ),
+                                    ft.Text(
+                                        "PNG · JPG · GIF · WEBP  |  multi-select aktif",
+                                        color=MUTED,
+                                        size=10,
+                                    ),
+                                ],
+                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                                alignment=ft.MainAxisAlignment.CENTER,
+                                spacing=7,
+                            ),
+                        ),
+                        on_click=self._emoji_browser_pick_files,
+                        expand=True,
+                    ),
                     ft.Text(
                         "File dibaca langsung oleh browser dan dikirim ke Discord; "
                         "tidak perlu SFTP atau path Termux.",
@@ -277,91 +298,13 @@ class SenaFletUI(_BaseSenaFletUI):
         )
 
     def _emoji(self) -> ft.Control:
-        self.emoji_guild.options = self._guild_options()
-        if self.emoji_guild.value is None and self.ctx.client.guilds:
-            self.emoji_guild.value = str(self.ctx.client.guilds[0].id)
-        self._refresh_emoji_list()
-
-        local_path_panel = self._panel(
-            ft.Column(
-                controls=[
-                    ft.Text(
-                        "Local/Termux path (fallback)",
-                        color=TEXT,
-                        weight=ft.FontWeight.W_600,
-                    ),
-                    self.emoji_path,
-                    self.emoji_name,
-                    ft.Row(
-                        wrap=True,
-                        controls=[
-                            ft.Button(
-                                "Upload file path",
-                                icon=ft.Icons.UPLOAD_FILE,
-                                on_click=self._emoji_upload_file,
-                            ),
-                            ft.Button(
-                                "Upload folder path",
-                                icon=ft.Icons.DRIVE_FOLDER_UPLOAD_OUTLINED,
-                                on_click=self._emoji_upload_folder,
-                            ),
-                        ],
-                    ),
-                    self.emoji_status,
-                ],
-                spacing=10,
-            )
-        )
-
-        delete_panel = self._panel(
-            ft.Column(
-                controls=[
-                    ft.Text(
-                        "Manage existing emoji",
-                        color=TEXT,
-                        weight=ft.FontWeight.W_600,
-                    ),
-                    self.emoji_delete,
-                    ft.Row(
-                        wrap=True,
-                        controls=[
-                            ft.Button(
-                                "Delete selected",
-                                icon=ft.Icons.DELETE_OUTLINE,
-                                on_click=self._emoji_delete_selected,
-                            ),
-                            ft.IconButton(
-                                icon=ft.Icons.REFRESH,
-                                on_click=self._refresh_emoji,
-                            ),
-                        ],
-                    ),
-                ],
-                spacing=10,
-            )
-        )
-
-        return self._body(
-            [
-                self._title(
-                    "Emoji",
-                    "Browser multi-file upload, local fallback, dan delete manager",
-                ),
-                self.emoji_guild,
-                self._browser_upload_panel(),
-                local_path_panel,
-                delete_panel,
-                ft.Container(
-                    height=320 if self._compact else 420,
-                    content=self._panel(
-                        ft.Column(
-                            controls=[self.emoji_text],
-                            scroll=ft.ScrollMode.AUTO,
-                            expand=True,
-                        ),
-                        expand=True,
-                        padding=12,
-                    ),
-                ),
-            ]
-        )
+        # Reuse the full base Emoji manager (server selection, local-path fallback,
+        # delete manager, inventory) and insert browser multi-select as the primary
+        # panel. This avoids duplicating the whole page and keeps future base fixes.
+        view = super()._emoji()
+        body = getattr(view, "content", None)
+        controls = getattr(body, "controls", None)
+        if isinstance(controls, list):
+            insert_at = 2 if len(controls) >= 2 else len(controls)
+            controls.insert(insert_at, self._browser_upload_panel())
+        return view
