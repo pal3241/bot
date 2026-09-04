@@ -21,9 +21,11 @@ class SenaFletUI(_BaseSenaFletUI):
             value=profile,
             options=self._options(
                 [
-                    ("low", "Low bandwidth · prefer ≤96 kbps"),
-                    ("balanced", "Balanced · prefer ≤128 kbps"),
-                    ("high", "High quality · best audio"),
+                    ("data_saver", "Data Saver · source ≤48 kbps · Discord 48 kbps"),
+                    ("ultra_low", "Ultra Low · source ≤64 kbps · Discord 64 kbps"),
+                    ("low", "Low · source ≤96 kbps · Discord 80 kbps"),
+                    ("balanced", "Balanced · source ≤128 kbps · Discord 96 kbps"),
+                    ("high", "High quality · best audio · Discord 128 kbps"),
                 ]
             ),
             expand=True,
@@ -40,15 +42,24 @@ class SenaFletUI(_BaseSenaFletUI):
             )
             self.music_stream_profile.value = saved.stream_profile
             labels = {
-                "low": "Low bandwidth aktif · target audio ≤96 kbps bila tersedia.",
-                "balanced": "Balanced aktif · target audio ≤128 kbps bila tersedia.",
-                "high": "High quality aktif · yt-dlp memilih best audio.",
+                "data_saver": (
+                    "Data Saver aktif · sumber target ≤48 kbps + Discord Opus 48 kbps."
+                ),
+                "ultra_low": (
+                    "Ultra Low aktif · sumber target ≤64 kbps + Discord Opus 64 kbps."
+                ),
+                "low": "Low aktif · sumber target ≤96 kbps + Discord Opus 80 kbps.",
+                "balanced": (
+                    "Balanced aktif · sumber target ≤128 kbps + Discord Opus 96 kbps."
+                ),
+                "high": "High quality aktif · best audio + Discord Opus 128 kbps.",
             }
             self.music_bandwidth_status.value = (
                 labels.get(saved.stream_profile, f"Profile aktif: {saved.stream_profile}")
                 + " Berlaku mulai track berikutnya."
             )
             self.music_bandwidth_status.color = SUCCESS
+            self.music_backend.value = manager.backend_status()
         except Exception as error:
             self.music_bandwidth_status.value = (
                 f"Bandwidth setting gagal · {type(error).__name__}: {error}"
@@ -72,9 +83,10 @@ class SenaFletUI(_BaseSenaFletUI):
                         weight=ft.FontWeight.W_600,
                     ),
                     ft.Text(
-                        "Low bandwidth hanya meminta stream audio ringan dari sumber. "
-                        "Video tetap tidak diputar. Jika platform tidak punya audio di bawah "
-                        "target, yt-dlp akan fallback ke audio berikutnya agar playback tetap jalan.",
+                        "Profile sekarang menghemat dua arah: stream audio sumber → device "
+                        "dan encoder Opus device → Discord. Video tetap tidak diputar. "
+                        "Jika platform tidak menyediakan bitrate serendah target, yt-dlp "
+                        "akan fallback ke audio berikutnya agar playback tetap jalan.",
                         color=MUTED,
                         size=10,
                     ),
