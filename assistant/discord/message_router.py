@@ -5,6 +5,7 @@ import discord
 
 from actions.executor import ActionExecutor
 from actions.models import ActionResult
+from actions.parser import looks_like_music_request
 from actions.registry import ActionContext
 from assistant.conversation import ConversationKey, build_conversation_key
 from assistant.discord.message_classifier import MessageAction, MessageDecision, MessageFacts, SessionCommand, classify_message
@@ -65,6 +66,18 @@ def _music_result_text(results: tuple[ActionResult, ...]) -> str:
         if result.succeeded and result.tool.startswith("music.")
     ]
     return "\n".join(detail for detail in details if detail.strip())
+
+
+def _music_failure_text(results: tuple[ActionResult, ...]) -> str:
+    failures = [
+        result
+        for result in results
+        if not result.succeeded and result.tool.startswith("music.")
+    ]
+    if not failures:
+        return ""
+    detail = "; ".join(f"{item.tool}: {item.detail}" for item in failures)
+    return f"Music gagal dijalankan: {detail}"
 
 
 class DiscordMessageRouter:
@@ -144,13 +157,15 @@ class DiscordMessageRouter:
 
         self._assistant.sessions.activate(key)
         started = monotonic()
+        cleaned_request = decision.cleaned_text or ""
+        music_requested = looks_like_music_request(cleaned_request)
         try:
             async with message.channel.typing():
                 response = await self._assistant.chat(
                     message.author.id,
                     message.author.display_name,
                     message.channel.id,
-                    decision.cleaned_text or "Respond briefly to being called.",
+                    cleaned_request or "Respond briefly to being called.",
                     guild_id,
                     "discord_text",
                 )
@@ -166,21 +181,31 @@ class DiscordMessageRouter:
             failures = [result for result in action_results if not result.succeeded]
             successes = [result for result in action_results if result.succeeded]
 
-            # Runtime executor results are authoritative. Scheduler and music operations
-            # replace pre-execution LLM text so Sena never claims a job/playback state
-            # that did not actually happen.
+            # Runtime executor results are authoritative. Never preserve a pre-execution
+            # LLM success claim for music when the action failed or never ran.
             schedule_text = _schedule_result_text(tuple(action_results))
             music_text = _music_result_text(tuple(action_results))
+            music_failure = _music_failure_text(tuple(action_results))
             if schedule_text:
                 text = schedule_text
             elif music_text:
                 text = music_text
+            elif music_failure:
+                text = music_failure
+            elif music_requested and not action_results:
+                text = (
+                    "Command musik tidak dieksekusi. Sena tidak menerima hasil action dari "
+                    "Music System, jadi gue nggak akan bilang sudah kalau belum benar-benar jalan."
+                )
             elif successes and _placeholder_text(text):
                 text = _action_success_ack(tuple(action_results), is_owner)
 
-            if failures:
+            non_music_failures = [
+                item for item in failures if not item.tool.startswith("music.")
+            ]
+            if non_music_failures:
                 detail = "; ".join(
-                    f"{item.tool}: {item.detail}" for item in failures
+                    f"{item.tool}: {item.detail}" for item in non_music_failures
                 )
                 if _placeholder_text(text):
                     text = "Aksinya gagal."
