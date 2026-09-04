@@ -27,8 +27,12 @@ class MemoryManager:
     async def retrieve(
         self, identity: UserIdentity, query: str
     ) -> list[MemoryRecord]:
-        if not identity.is_owner or not self.available:
+        if not self.available:
             return []
+
+        # The store key is the canonical Discord user ID. Although the historical DB
+        # column is named owner_id, every read remains strictly scoped to the current
+        # identity.user_id, so owner and ordinary-user memories cannot cross-contaminate.
         records: list[MemoryRecord] = await self._store.list_active(identity.user_id)
         selected: list[MemoryRecord] = select_memories(
             records, query, self._retrieval_limit, self._context_max_chars
@@ -49,8 +53,9 @@ class MemoryManager:
         policy_result: MemoryPolicyResult = self._policy.validate(identity, candidate)
         if not policy_result.allowed:
             print(
-                f"[SENA MEMORY] action rejected action={candidate.action.value} "
-                f"reason={policy_result.reason}"
+                f"[SENA MEMORY] action rejected user={identity.user_id} "
+                f"owner={'yes' if identity.is_owner else 'no'} "
+                f"action={candidate.action.value} reason={policy_result.reason}"
             )
             return None
         if candidate.action is MemoryActionType.DELETE:
@@ -103,15 +108,15 @@ class MemoryManager:
             )
         return await self._store.insert(identity.user_id, candidate, source)
 
-    async def list_memories(self, owner_id: int) -> list[MemoryRecord]:
+    async def list_memories(self, user_id: int) -> list[MemoryRecord]:
         if not self.available:
             return []
-        return await self._store.list_active(owner_id)
+        return await self._store.list_active(user_id)
 
-    async def count_active(self, owner_id: int) -> int:
+    async def count_active(self, user_id: int) -> int:
         if not self.available:
             return 0
-        return await self._store.count_active(owner_id)
+        return await self._store.count_active(user_id)
 
     async def close(self) -> None:
         await self._store.close()
