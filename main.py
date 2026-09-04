@@ -13,6 +13,7 @@ from core.device import DeviceInfo, detect_device, format_device_summary
 from core.feature_loader import FeatureLoadResult, feature_health_summary, load_features
 from core.io import ainput
 from core.registry import FEATURES
+from core.runtime_log import install_runtime_log_capture, restore_runtime_log_capture
 from core.runtime_status import RuntimeStatus
 
 MessageDisplay = Callable[[discord.Message, AppContext], Awaitable[None]]
@@ -321,4 +322,8 @@ def get_token() -> str:
 
 
 if __name__ == "__main__":
-    asyncio.run(run(get_token()))
+    install_runtime_log_capture()
+    try:
+        asyncio.run(run(get_token()))
+    finally:
+        restore_runtime_log_capture()
