@@ -4,8 +4,11 @@ aiohttp>=3.13,<4
 gTTS>=2.5,<3
 python-dotenv>=1.1,<2
 aiosqlite>=0.21,<1
-flet>=0.80,<2
-flet-web>=0.80,<2
+
+# Flet 0.86+ dipakai karena FilePicker web dapat membaca file browser sebagai bytes
+# (with_data=True), sehingga multi-file emoji upload tidak membutuhkan SFTP/path lokal.
+flet>=0.86,<0.87
+flet-web>=0.86,<0.87
 
 # Native Discord voice dependencies. Android/Termux menjalankan degraded mode
 # dan melewati dependency ini supaya kegagalan voice tidak memblokir bot utama.
