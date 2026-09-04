@@ -6,6 +6,8 @@ import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import discord
+
 from actions.models import ActionRequest, ActionResult, ActionRisk, ActionStatus
 from actions.registry import ActionContext, ActionRegistry, ActionSpec
 from scheduler.manager import SchedulerManager
@@ -62,6 +64,16 @@ def _auto_mention(context: ActionContext) -> int | None:
         if bot_id is not None and user.id == bot_id:
             continue
         return user.id
+    return None
+
+
+def _speaker_voice_channel_id(context: ActionContext) -> int | None:
+    author = context.message.author
+    if not isinstance(author, discord.Member) or author.voice is None:
+        return None
+    channel = author.voice.channel
+    if isinstance(channel, (discord.VoiceChannel, discord.StageChannel)):
+        return channel.id
     return None
 
 
@@ -133,12 +145,17 @@ async def _create_handler(
                     ActionStatus.REJECTED,
                     "job_arguments harus object/dict",
                 )
+            payload = dict(payload_value)
+            if job_type == "music.play" and "voice_channel_id" not in payload:
+                voice_channel_id = _speaker_voice_channel_id(context)
+                if voice_channel_id is not None:
+                    payload["voice_channel_id"] = voice_channel_id
             item = await scheduler.create_job(
                 guild_id=guild_id,
                 channel_id=target_channel_id,
                 creator_id=context.message.author.id,
                 job_type=job_type,
-                payload=dict(payload_value),
+                payload=payload,
                 run_at=run_at,
                 delay_seconds=delay_seconds,
                 recurrence_seconds=recurrence_seconds,
@@ -252,7 +269,7 @@ def register_schedule_actions(
     registry.register(
         ActionSpec(
             "schedule.create",
-            "Create a universal persistent scheduled job. For a Discord message omit job_type or use job_type='discord.message' with message(string), optional mention_user_id, and run_at OR delay_seconds. For another registered feature use job_type(string) plus job_arguments(object), and run_at OR delay_seconds. Optional recurrence_seconds>=60 and channel_id. Never invent a job_type. Currently registered scheduled job types: "
+            "Create a universal persistent scheduled job. For a Discord message omit job_type or use job_type='discord.message' with message(string), optional mention_user_id, and run_at OR delay_seconds. For another registered feature use job_type(string) plus job_arguments(object), and run_at OR delay_seconds. For job_type='music.play', job_arguments requires query(string); the speaker's current voice channel is captured automatically when available. Optional recurrence_seconds>=60 and channel_id. Never invent a job_type. Currently registered scheduled job types: "
             + scheduler.job_catalog(),
             ActionRisk.MODERATE,
             create,
