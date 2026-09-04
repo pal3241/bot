@@ -24,20 +24,18 @@ _ALLOWED_EMOJI_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp"}
 class SenaFletUI(_BaseSenaFletUI):
     """Control center with direct browser -> Discord emoji uploads.
 
-    Flet web does not expose the client's filesystem path, so selected files are
-    requested with ``with_data=True`` and their bytes are sent directly to Discord.
-    This keeps laptop/browser uploads independent from Termux/SFTP paths.
+    Browser-selected files are requested with ``with_data=True`` and their bytes are
+    sent directly to Discord. No client filesystem path or SFTP step is required.
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._browser_emoji_files: list[ft.FilePickerFile] = []
 
-        # Keep FilePicker construction intentionally argument-free. Some Flet builds
-        # expose on_result as an event property but do not accept it in __init__().
-        # Assigning the handler after construction works across both API shapes.
+        # Keep FilePicker construction argument-free. The Termux Flet build used by
+        # Senna exposes the async pick_files() API but does not expose PickFiles client
+        # actions and does not accept on_result in the constructor.
         self.emoji_file_picker = ft.FilePicker()
-        self.emoji_file_picker.on_result = self._emoji_browser_pick_result
 
         self.emoji_browser_files = ft.Text(
             "Belum ada file dipilih.",
@@ -73,21 +71,50 @@ class SenaFletUI(_BaseSenaFletUI):
         )
         return "\n".join(lines)
 
-    async def _emoji_browser_pick_result(self, e: Any) -> None:
-        files = list(getattr(e, "files", None) or [])
+    def _set_browser_selection(self, files: list[ft.FilePickerFile]) -> None:
         self._browser_emoji_files = files
         self.emoji_browser_files.value = self._format_browser_selection()
         self.emoji_browser_upload_button.disabled = not bool(files)
         if files:
-            too_large = sum(1 for file in files if int(file.size or 0) > MAX_EMOJI_SIZE)
+            too_large = sum(
+                1 for file in files if int(file.size or 0) > MAX_EMOJI_SIZE
+            )
             self.emoji_browser_status.value = (
                 f"Dipilih {len(files)} file"
-                + (f" · {too_large} akan dilewati karena > {MAX_EMOJI_SIZE / 1024:.0f} KB" if too_large else "")
+                + (
+                    f" · {too_large} akan dilewati karena > "
+                    f"{MAX_EMOJI_SIZE / 1024:.0f} KB"
+                    if too_large
+                    else ""
+                )
             )
             self.emoji_browser_status.color = WARNING if too_large else SUCCESS
         else:
             self.emoji_browser_status.value = "Pemilihan dibatalkan."
             self.emoji_browser_status.color = MUTED
+
+    async def _emoji_browser_pick_files(self, e: Any) -> None:
+        del e
+        try:
+            files = await self.emoji_file_picker.pick_files(
+                allow_multiple=True,
+                with_data=True,
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=sorted(_ALLOWED_EMOJI_EXTENSIONS),
+            )
+            self._set_browser_selection(list(files or []))
+        except Exception as error:
+            self._browser_emoji_files = []
+            self.emoji_browser_files.value = "Belum ada file dipilih."
+            self.emoji_browser_upload_button.disabled = True
+            self.emoji_browser_status.value = (
+                f"File picker gagal · {type(error).__name__}: {error}"
+            )
+            self.emoji_browser_status.color = ERROR
+            print(
+                f"[SENA UI EMOJI] file picker failed "
+                f"type={type(error).__name__} detail={error}"
+            )
         if self.page:
             self.page.update()
 
@@ -97,7 +124,6 @@ class SenaFletUI(_BaseSenaFletUI):
         existing: set[str],
         requested_name: str = "",
     ) -> str:
-        # Reuse the base sanitiser/deduper without requiring a real filesystem file.
         return self._emoji_name_for_path(
             Path(file_name),
             existing,
@@ -145,9 +171,7 @@ class SenaFletUI(_BaseSenaFletUI):
                     continue
 
                 requested_name = (
-                    (self.emoji_name.value or "").strip()
-                    if total == 1
-                    else ""
+                    (self.emoji_name.value or "").strip() if total == 1 else ""
                 )
                 emoji_name = self._emoji_name_from_browser_file(
                     file.name,
@@ -198,20 +222,17 @@ class SenaFletUI(_BaseSenaFletUI):
             self.page.update()
 
     def _browser_upload_panel(self) -> ft.Control:
-        pick_action = ft.PickFiles(
-            self.emoji_file_picker,
-            allow_multiple=True,
-            with_data=True,
-            file_type=ft.FilePickerFileType.CUSTOM,
-            allowed_extensions=sorted(_ALLOWED_EMOJI_EXTENSIONS),
-        )
         pick_button = ft.Button(
             content=ft.Container(
                 height=150 if self._compact else 180,
                 alignment=ft.Alignment.CENTER,
                 content=ft.Column(
                     controls=[
-                        ft.Icon(ft.Icons.CLOUD_UPLOAD_OUTLINED, size=38, color="#BDBDBD"),
+                        ft.Icon(
+                            ft.Icons.CLOUD_UPLOAD_OUTLINED,
+                            size=38,
+                            color="#BDBDBD",
+                        ),
                         ft.Text(
                             "Pilih banyak emoji dari laptop",
                             color=TEXT,
@@ -229,7 +250,7 @@ class SenaFletUI(_BaseSenaFletUI):
                     spacing=7,
                 ),
             ),
-            action=pick_action,
+            on_click=self._emoji_browser_pick_files,
             expand=True,
         )
         return self._panel(
@@ -237,7 +258,8 @@ class SenaFletUI(_BaseSenaFletUI):
                 controls=[
                     pick_button,
                     ft.Text(
-                        "File dibaca langsung oleh browser dan dikirim ke Discord; tidak perlu SFTP atau path Termux.",
+                        "File dibaca langsung oleh browser dan dikirim ke Discord; "
+                        "tidak perlu SFTP atau path Termux.",
                         color=MUTED,
                         size=10,
                     ),
@@ -260,8 +282,6 @@ class SenaFletUI(_BaseSenaFletUI):
             self.emoji_guild.value = str(self.ctx.client.guilds[0].id)
         self._refresh_emoji_list()
 
-        # Keep path-based upload as a fallback for files already on Termux, while
-        # browser multi-select becomes the primary workflow.
         local_path_panel = self._panel(
             ft.Column(
                 controls=[
@@ -296,7 +316,11 @@ class SenaFletUI(_BaseSenaFletUI):
         delete_panel = self._panel(
             ft.Column(
                 controls=[
-                    ft.Text("Manage existing emoji", color=TEXT, weight=ft.FontWeight.W_600),
+                    ft.Text(
+                        "Manage existing emoji",
+                        color=TEXT,
+                        weight=ft.FontWeight.W_600,
+                    ),
                     self.emoji_delete,
                     ft.Row(
                         wrap=True,
