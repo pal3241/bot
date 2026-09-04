@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 from datetime import datetime
@@ -27,7 +28,7 @@ def _positive_int(value: object, field: str) -> int | None:
         if mention is not None:
             text = mention.group(1)
         if not text.isdecimal():
-            raise ValueError(f"{field} harus berupa Discord ID.")
+            raise ValueError(f"{field} harus berupa Discord ID/angka.")
         number = int(text)
     else:
         raise ValueError(f"{field} harus berupa angka/Discord ID.")
@@ -64,23 +65,30 @@ def _auto_mention(context: ActionContext) -> int | None:
     return None
 
 
+def _job_preview(job_type: str, payload: dict[str, object]) -> str:
+    if job_type == "discord.message":
+        value = payload.get("message", payload.get("content", ""))
+        return str(value).replace("\n", " ")[:80]
+    try:
+        encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        encoded = repr(payload)
+    return encoded.replace("\n", " ")[:100]
+
+
 async def _create_handler(
     scheduler: SchedulerManager,
     context: ActionContext,
     request: ActionRequest,
 ) -> ActionResult:
     args = request.arguments
-    content_value = args.get("message", args.get("content", args.get("text")))
-    if not isinstance(content_value, str) or not content_value.strip():
-        return ActionResult(
-            request.tool,
-            ActionStatus.REJECTED,
-            "argument message wajib diisi",
-        )
+    job_type_value = args.get("job_type", "discord.message")
+    if not isinstance(job_type_value, str) or not job_type_value.strip():
+        return ActionResult(request.tool, ActionStatus.REJECTED, "job_type tidak valid")
+    job_type = job_type_value.strip().casefold()
 
     try:
         channel_id = _positive_int(args.get("channel_id"), "channel_id")
-        mention_user_id = _positive_int(args.get("mention_user_id"), "mention_user_id")
         recurrence_seconds = _positive_int(
             args.get("recurrence_seconds"), "recurrence_seconds"
         )
@@ -88,27 +96,61 @@ async def _create_handler(
     except ValueError as error:
         return ActionResult(request.tool, ActionStatus.REJECTED, str(error))
 
-    if mention_user_id is None:
-        mention_user_id = _auto_mention(context)
-
     run_at_value = args.get("run_at")
     run_at = run_at_value.strip() if isinstance(run_at_value, str) else None
+    target_channel_id = channel_id or context.message.channel.id
+    guild_id = context.message.guild.id if context.message.guild else None
 
     try:
-        item = await scheduler.create(
-            guild_id=context.message.guild.id if context.message.guild else None,
-            channel_id=channel_id or context.message.channel.id,
-            creator_id=context.message.author.id,
-            content=content_value,
-            mention_user_id=mention_user_id,
-            run_at=run_at,
-            delay_seconds=delay_seconds,
-            recurrence_seconds=recurrence_seconds,
-        )
+        if job_type == "discord.message":
+            content_value = args.get("message", args.get("content", args.get("text")))
+            if not isinstance(content_value, str) or not content_value.strip():
+                return ActionResult(
+                    request.tool,
+                    ActionStatus.REJECTED,
+                    "discord.message membutuhkan argument message",
+                )
+            mention_user_id = _positive_int(
+                args.get("mention_user_id"), "mention_user_id"
+            )
+            if mention_user_id is None:
+                mention_user_id = _auto_mention(context)
+            item = await scheduler.create(
+                guild_id=guild_id,
+                channel_id=target_channel_id,
+                creator_id=context.message.author.id,
+                content=content_value,
+                mention_user_id=mention_user_id,
+                run_at=run_at,
+                delay_seconds=delay_seconds,
+                recurrence_seconds=recurrence_seconds,
+            )
+        else:
+            payload_value = args.get("job_arguments", args.get("payload", {}))
+            if not isinstance(payload_value, dict):
+                return ActionResult(
+                    request.tool,
+                    ActionStatus.REJECTED,
+                    "job_arguments harus object/dict",
+                )
+            item = await scheduler.create_job(
+                guild_id=guild_id,
+                channel_id=target_channel_id,
+                creator_id=context.message.author.id,
+                job_type=job_type,
+                payload=dict(payload_value),
+                run_at=run_at,
+                delay_seconds=delay_seconds,
+                recurrence_seconds=recurrence_seconds,
+            )
     except (RuntimeError, ValueError) as error:
         return ActionResult(request.tool, ActionStatus.REJECTED, str(error))
 
-    mention = f" · tag=<@{item.mention_user_id}>" if item.mention_user_id else ""
+    tag = (
+        f" · tag=<@{item.mention_user_id}>"
+        if item.job_type == "discord.message" and item.mention_user_id
+        else ""
+    )
     repeat = (
         f" · ulang={item.recurrence_seconds}s"
         if item.recurrence_seconds is not None
@@ -117,7 +159,7 @@ async def _create_handler(
     return ActionResult(
         request.tool,
         ActionStatus.SUCCESS,
-        f"Schedule #{item.id} dibuat · {_local_time(item.next_run_at)}{mention}{repeat}",
+        f"Schedule #{item.id} dibuat · type={item.job_type} · {_local_time(item.next_run_at)}{tag}{repeat}",
     )
 
 
@@ -137,17 +179,19 @@ async def _list_handler(
     lines: list[str] = []
     for item in items[:20]:
         owner = f" · by={item.creator_id}" if context.is_owner else ""
-        tag = f" · tag=<@{item.mention_user_id}>" if item.mention_user_id else ""
+        tag = (
+            f" · tag=<@{item.mention_user_id}>"
+            if item.job_type == "discord.message" and item.mention_user_id
+            else ""
+        )
         repeat = (
             f" · setiap {item.recurrence_seconds}s"
             if item.recurrence_seconds is not None
             else ""
         )
-        preview = item.content.replace("\n", " ").strip()
-        if len(preview) > 70:
-            preview = preview[:67] + "..."
+        preview = _job_preview(item.job_type, item.payload)
         lines.append(
-            f"#{item.id} · {_local_time(item.next_run_at)}{tag}{repeat}{owner} · {preview}"
+            f"#{item.id} · {item.job_type} · {_local_time(item.next_run_at)}{tag}{repeat}{owner} · {preview}"
         )
     if len(items) > 20:
         lines.append(f"... +{len(items) - 20} schedule lain")
@@ -208,7 +252,8 @@ def register_schedule_actions(
     registry.register(
         ActionSpec(
             "schedule.create",
-            "Create a Discord scheduled message. arguments: message(string), run_at(ISO-8601 with timezone) OR delay_seconds(number), optional mention_user_id(Discord user ID), optional recurrence_seconds(integer >=60), optional channel_id. If the user mentions one non-bot user and mention_user_id is omitted, that mention is used automatically.",
+            "Create a universal persistent scheduled job. For a Discord message omit job_type or use job_type='discord.message' with message(string), optional mention_user_id, and run_at OR delay_seconds. For another registered feature use job_type(string) plus job_arguments(object), and run_at OR delay_seconds. Optional recurrence_seconds>=60 and channel_id. Never invent a job_type. Currently registered scheduled job types: "
+            + scheduler.job_catalog(),
             ActionRisk.MODERATE,
             create,
         )
@@ -216,7 +261,7 @@ def register_schedule_actions(
     registry.register(
         ActionSpec(
             "schedule.list",
-            "List active scheduled messages. Normal users see only their schedules; owner can see all. arguments: {}.",
+            "List active universal scheduled jobs. Normal users see only their schedules; owner can see all. arguments: {}.",
             ActionRisk.SAFE,
             list_schedules,
         )
@@ -224,7 +269,7 @@ def register_schedule_actions(
     registry.register(
         ActionSpec(
             "schedule.cancel",
-            "Cancel a scheduled message. arguments: schedule_id(integer). Normal users can cancel only their own; owner can cancel any schedule.",
+            "Cancel a scheduled job. arguments: schedule_id(integer). Normal users can cancel only their own; owner can cancel any schedule.",
             ActionRisk.MODERATE,
             cancel,
         )
