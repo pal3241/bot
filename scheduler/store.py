@@ -203,6 +203,14 @@ class ScheduleStore:
         )
         await connection.commit()
 
+    async def defer(self, schedule_id: int, next_run_at: str) -> None:
+        connection = self._require_connection()
+        await connection.execute(
+            "UPDATE schedules SET next_run_at = ? WHERE id = ? AND active = 1",
+            (next_run_at, schedule_id),
+        )
+        await connection.commit()
+
     async def close(self) -> None:
         if self._connection is not None:
             await self._connection.close()
