@@ -42,39 +42,82 @@ class SenaFletUI(_BaseSenaFletUI):
             disabled=True,
         )
 
-    async def main(self, page: ft.Page) -> None:
-        # Build the normal page first so the Flet web session/control tree is alive,
-        # then register FilePicker as a service and force one synchronization. This is
-        # required by the 0.86 service API before _invoke_method()/pick_files() works.
-        await super().main(page)
-        if self.emoji_file_picker not in page.services:
-            page.services.append(self.emoji_file_picker)
+    def _picker_is_service_runtime(self) -> bool:
+        """Return True when this Flet build models FilePicker as a Service."""
+        return any(base.__name__ == "Service" for base in type(self.emoji_file_picker).mro())
+
+    def _picker_is_mounted(self) -> bool:
+        try:
+            _ = self.emoji_file_picker.page
+            return True
+        except (RuntimeError, AttributeError):
+            return False
+
+    async def _mount_file_picker(self, page: ft.Page) -> str:
+        """Mount FilePicker across both modern Service and classic Control runtimes.
+
+        Newer Flet releases mount FilePicker under page.services. Some Android/Termux
+        builds expose the async pick_files API but still require the picker to live in
+        page.overlay/control tree. We detect the runtime and fall back safely.
+        """
+        if self._picker_is_mounted():
+            return "already"
+
+        if self._picker_is_service_runtime() and hasattr(page, "services"):
+            try:
+                if self.emoji_file_picker not in page.services:
+                    page.services.append(self.emoji_file_picker)
+                page.update()
+                await asyncio.sleep(0)
+                if self._picker_is_mounted():
+                    return "services"
+            except Exception as error:
+                print(
+                    f"[SENA UI EMOJI] FilePicker services mount failed "
+                    f"type={type(error).__name__} detail={error}; fallback=overlay"
+                )
+
+            try:
+                if self.emoji_file_picker in page.services:
+                    page.services.remove(self.emoji_file_picker)
+                    page.update()
+                    await asyncio.sleep(0)
+            except Exception:
+                pass
+
+        overlay = getattr(page, "overlay", None)
+        if overlay is None:
+            raise RuntimeError(
+                "Flet runtime tidak menyediakan page.overlay untuk FilePicker fallback."
+            )
+        if self.emoji_file_picker not in overlay:
+            overlay.append(self.emoji_file_picker)
         page.update()
         await asyncio.sleep(0)
-        print("[SENA UI EMOJI] FilePicker service mounted")
+
+        if self._picker_is_mounted():
+            return "overlay"
+
+        raise RuntimeError(
+            "FilePicker tidak berhasil di-mount via page.services maupun page.overlay."
+        )
+
+    async def main(self, page: ft.Page) -> None:
+        await super().main(page)
+        mode = await self._mount_file_picker(page)
+        print(
+            f"[SENA UI EMOJI] FilePicker mounted mode={mode} "
+            f"class={type(self.emoji_file_picker).__name__}"
+        )
 
     async def _ensure_file_picker_mounted(self) -> None:
         page = self.page
         if page is None:
             raise RuntimeError("Flet page belum siap.")
-
-        try:
-            _ = self.emoji_file_picker.page
+        if self._picker_is_mounted():
             return
-        except RuntimeError:
-            pass
-
-        if self.emoji_file_picker not in page.services:
-            page.services.append(self.emoji_file_picker)
-        page.update()
-        await asyncio.sleep(0)
-
-        try:
-            _ = self.emoji_file_picker.page
-        except RuntimeError as error:
-            raise RuntimeError(
-                "FilePicker service belum mounted ke Flet page setelah sync."
-            ) from error
+        mode = await self._mount_file_picker(page)
+        print(f"[SENA UI EMOJI] FilePicker remounted mode={mode}")
 
     def _format_browser_selection(self) -> str:
         if not self._browser_emoji_files:
