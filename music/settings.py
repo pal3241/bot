@@ -7,7 +7,7 @@ from pathlib import Path
 
 @dataclass(frozen=True, slots=True)
 class MusicSettings:
-    default_volume_percent: int = 70
+    default_volume_percent: int = 35
     max_volume_percent: int = 150
     search_limit: int = 5
     max_playlist_items: int = 25
@@ -29,7 +29,7 @@ def _bool(value: object, fallback: bool) -> bool:
 
 def normalize_settings(value: MusicSettings) -> MusicSettings:
     max_volume = _int(value.max_volume_percent, 150, 1, 200)
-    default_volume = _int(value.default_volume_percent, 70, 0, max_volume)
+    default_volume = _int(value.default_volume_percent, 35, 0, max_volume)
     return MusicSettings(
         default_volume_percent=default_volume,
         max_volume_percent=max_volume,
