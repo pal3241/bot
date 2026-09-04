@@ -17,8 +17,6 @@ def _dedupe_actions(actions: list[ActionRequest]) -> tuple[ActionRequest, ...]:
     result: list[ActionRequest] = []
     seen: set[tuple[str, tuple[tuple[str, str], ...]]] = set()
     for action in actions:
-        # Action tag fallback is intentionally limited to argument-free tools. JSON
-        # remains the authoritative format for actions that require arguments.
         key = (
             action.tool,
             tuple(sorted((str(k), repr(v)) for k, v in action.arguments.items())),
@@ -89,12 +87,7 @@ _VOICE_WORDS = ("vc", "voice", "voice channel", "suara")
 
 
 def infer_safe_actions_from_text(text: str) -> tuple[ActionRequest, ...]:
-    """Deterministic fallback for obvious, argument-free SAFE actions.
-
-    The LLM remains the primary natural-language planner. This fallback exists so an
-    obvious voice command cannot silently become actions=[] merely because a provider
-    ignored the structured action field.
-    """
+    """Deterministic fallback for obvious, argument-free SAFE actions."""
     normalized = re.sub(r"\s+", " ", text.strip().casefold())
     if not normalized:
         return ()
@@ -118,10 +111,18 @@ def action_response_instruction(tool_descriptions: str) -> str:
         "Natural-language requests map to tools even without command syntax. For example, "
         "'join vc sini', 'masuk vc gue', 'ikut ke voice', and equivalent wording MUST produce "
         "voice.join_user rather than actions=[]. Resolve words such as here/sini using the "
-        "current Discord context when a tool supports it. Do not claim an action succeeded in "
-        "text before execution; prefer a short acknowledgement such as 'oke' or 'gue coba'. "
-        "Never output <action> tags, XML-like action syntax, action JSON, or tool metadata in "
-        "visible text. Actions belong ONLY in the top-level JSON 'actions' array. Maximum 4 "
-        "actions per response and preserve the user's requested order. Available tools:\n"
+        "current Discord context when a tool supports it. "
+        "Scheduling requests MUST use schedule.create instead of merely promising to do it. "
+        "For example, 'jam 8 malam tag <@123> bilang jangan lupa tugas' should create a "
+        "schedule.create action whose message is 'jangan lupa tugas', whose run_at is resolved "
+        "from the trusted current-time context, and whose mention_user_id is 123. Requests such "
+        "as 'jadwal gue apa' should use schedule.list, and 'hapus schedule 7' should use "
+        "schedule.cancel with schedule_id=7. Preserve the exact intended scheduled message; "
+        "do not include the scheduling instruction itself inside message. "
+        "Do not claim an action succeeded in text before execution; prefer a short "
+        "acknowledgement such as 'oke' or 'gue coba'. Never output <action> tags, XML-like "
+        "action syntax, action JSON, or tool metadata in visible text. Actions belong ONLY in "
+        "the top-level JSON 'actions' array. Maximum 4 actions per response and preserve the "
+        "user's requested order. Available tools:\n"
         + tool_descriptions
     )
