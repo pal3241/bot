@@ -5,9 +5,9 @@ gTTS>=2.5,<3
 python-dotenv>=1.1,<2
 aiosqlite>=0.21,<1
 
-# Pin Flet server + compiled web client ke versi yang sama. FilePicker pada
-# Flet modern adalah Service (page.services), bukan overlay control. Exact pins
-# mencegah Python runtime dan browser client drift ke versi yang tidak cocok.
+# Pin Flet server + compiled web client ke versi yang sama untuk menjaga dashboard
+# Termux stabil. Browser emoji upload memakai aiohttp + native HTML drag/drop, jadi
+# tidak bergantung pada FilePicker Service Flet Web yang bermasalah.
 flet==0.86.5
 flet-web==0.86.5
 
