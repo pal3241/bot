@@ -1,5 +1,6 @@
 import unittest
 
+from actions.parser import parse_action_response
 from core.structured_response import sanitize_visible_text
 from memory.context import build_identity_context, enforce_owner_addressing
 from memory.identity import OwnerResolver
@@ -50,9 +51,34 @@ class StructuredResponseFirewallTests(unittest.TestCase):
         )
         self.assertEqual(sanitize_visible_text(raw), "jawaban asli setelah metadata")
 
+    def test_action_tag_is_removed_from_visible_text(self) -> None:
+        raw = "oke gue masuk. <action>[voice.join_user]</action>"
+        self.assertEqual(sanitize_visible_text(raw), "oke gue masuk.")
+
+    def test_action_tag_only_becomes_empty_visible_text(self) -> None:
+        raw = "<action>[voice.join_user]</action>"
+        self.assertEqual(sanitize_visible_text(raw), "")
+
     def test_normal_prose_about_emotions_is_preserved(self) -> None:
         raw = "Emotion itu normal; intensity perasaan bisa berubah."
         self.assertEqual(sanitize_visible_text(raw), raw)
+
+
+class TaggedActionFallbackTests(unittest.TestCase):
+    def test_tagged_voice_join_is_recovered_as_action(self) -> None:
+        actions = parse_action_response("<action>[voice.join_user]</action>")
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0].tool, "voice.join_user")
+        self.assertEqual(actions[0].arguments, {})
+
+    def test_json_actions_remain_primary(self) -> None:
+        raw = (
+            '{"text":"oke","actions":[{"tool":"voice.leave","arguments":{}}]}'
+            '<action>[voice.join_user]</action>'
+        )
+        actions = parse_action_response(raw)
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0].tool, "voice.leave")
 
 
 class OwnerContextTests(unittest.TestCase):
