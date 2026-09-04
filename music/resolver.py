@@ -104,7 +104,20 @@ class MusicResolver:
             "noplaylist": False,
             "extract_flat": "in_playlist",
             "ignoreerrors": True,
+            "socket_timeout": 15,
+            "retries": 3,
+            "fragment_retries": 3,
         }
+
+    def _stream_format_selector(self) -> str:
+        profile = self.settings.stream_profile
+        if profile == "low":
+            # YouTube commonly exposes Opus audio around 50-80 kbps. Prefer <=96 kbps,
+            # then <=128 kbps before falling back to any audio-only stream.
+            return "bestaudio[abr<=96]/bestaudio[abr<=128]/bestaudio/best"
+        if profile == "balanced":
+            return "bestaudio[abr<=128]/bestaudio[abr<=160]/bestaudio/best"
+        return "bestaudio/best"
 
     def _extract_sync(self, target: str) -> object:
         yt_dlp = self._import_yt_dlp()
@@ -170,8 +183,11 @@ class MusicResolver:
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
-            "format": "bestaudio/best",
+            "format": self._stream_format_selector(),
             "noplaylist": True,
+            "socket_timeout": 15,
+            "retries": 3,
+            "fragment_retries": 3,
         }
         with yt_dlp.YoutubeDL(options) as ydl:
             info = ydl.extract_info(webpage_url, download=False)
