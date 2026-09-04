@@ -262,7 +262,7 @@ class SenaFletUI(_BaseSenaFletUI):
                             ),
                             ft.Button(
                                 "Create schedule",
-                                icon=ft.Icons.SCHEDULE_SEND_OUTLINED,
+                                icon=ft.Icons.SCHEDULE,
                                 on_click=self._create_schedule,
                             ),
                             self.schedule_status,
@@ -282,7 +282,7 @@ class SenaFletUI(_BaseSenaFletUI):
                             self.schedule_cancel,
                             ft.Button(
                                 "Cancel selected",
-                                icon=ft.Icons.CANCEL_SCHEDULE_SEND_OUTLINED,
+                                icon=ft.Icons.DELETE_OUTLINE,
                                 on_click=self._cancel_schedule,
                             ),
                             ft.Container(
@@ -320,7 +320,7 @@ class SenaFletUI(_BaseSenaFletUI):
         rail.destinations.insert(
             5,
             ft.NavigationRailDestination(
-                icon=ft.Icons.SCHEDULE_OUTLINED,
+                icon=ft.Icons.SCHEDULE,
                 label="Schedule",
             ),
         )
