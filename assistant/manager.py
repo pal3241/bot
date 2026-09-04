@@ -89,6 +89,64 @@ def _current_time_context() -> str:
     )
 
 
+_ACTION_HINTS = (
+    "vc",
+    "voice",
+    "join",
+    "masuk",
+    "keluar",
+    "leave",
+    "musik",
+    "music",
+    "lagu",
+    "track",
+    "play",
+    "putar",
+    "pause",
+    "resume",
+    "skip",
+    "volume",
+    "queue",
+    "antrian",
+    "jadwal",
+    "schedule",
+    "remind",
+    "ingatkan",
+    "timer",
+    "nanti",
+    "besok",
+    "lusa",
+    "kirim pesan",
+    "tag ",
+    "mention",
+)
+_TIME_HINTS = (
+    "jam berapa",
+    "sekarang jam",
+    "tanggal berapa",
+    "hari apa",
+    "hari ini",
+    "besok",
+    "lusa",
+    "nanti",
+    "jam ",
+    "pukul ",
+    "menit lagi",
+    "detik lagi",
+    "jam lagi",
+)
+
+
+def _looks_like_action_request(text: str) -> bool:
+    normalized = " ".join(text.casefold().split())
+    return any(hint in normalized for hint in _ACTION_HINTS)
+
+
+def _needs_time_context(text: str) -> bool:
+    normalized = " ".join(text.casefold().split())
+    return any(hint in normalized for hint in _TIME_HINTS)
+
+
 class AssistantManager:
     def __init__(
         self,
@@ -114,7 +172,7 @@ class AssistantManager:
             "SENA_LLM_CONCURRENCY", 2 if device.is_android else 4
         )
         self._history_context_max_chars = _positive_int_env(
-            "SENA_HISTORY_CONTEXT_MAX_CHARS", 4000 if device.is_android else 8000
+            "SENA_HISTORY_CONTEXT_MAX_CHARS", 2400 if device.is_android else 7000
         )
         self._llm_slots = asyncio.Semaphore(self._llm_concurrency)
         print(
@@ -188,33 +246,47 @@ class AssistantManager:
                     )
             memory_seconds = time.monotonic() - memory_started
 
-            system_prompt = (
-                f"{self.personality.load()}\n\n"
-                f"{self.audience_personality.prompt_for(identity)}\n\n"
-                f"{_current_time_context()}\n\n"
-                f"Current input source: {source}.\n"
-                "This is a multi-user Discord conversation. Treat each Discord user ID "
-                "as a distinct canonical identity and never confuse speakers. Internal "
-                "context/protocol markers are private and must never appear in visible text.\n"
-                f"{build_identity_context(identity, memories)}"
+            action_planning = (
+                self.action_registry is not None
+                and source == "discord_text"
+                and _looks_like_action_request(clean_text)
+            )
+
+            prompt_parts = [
+                self.personality.load(),
+                self.audience_personality.prompt_for(identity),
+            ]
+            if action_planning or _needs_time_context(clean_text):
+                prompt_parts.append(_current_time_context())
+            prompt_parts.extend(
+                [
+                    f"Current input source: {source}.\n"
+                    "This is a multi-user Discord conversation. Treat each Discord user ID "
+                    "as a distinct canonical identity and never confuse speakers. Internal "
+                    "context/protocol markers are private and must never appear in visible text.",
+                    build_identity_context(identity, memories),
+                ]
             )
 
             explicit_candidate = (
                 parse_explicit_memory_command(clean_text) if memory_enabled else None
             )
-            system_prompt += "\n" + (
+            prompt_parts.append(
                 structured_response_instruction(identity)
                 if memory_enabled
                 else "Set the structured response memory field to null."
             )
-            system_prompt += "\n" + expression_response_instruction()
-            if self.action_registry is not None and source == "discord_text":
-                system_prompt += "\n" + action_response_instruction(
-                    self.action_registry.prompt_catalog()
+            prompt_parts.append(expression_response_instruction())
+            if action_planning and self.action_registry is not None:
+                prompt_parts.append(
+                    action_response_instruction(self.action_registry.prompt_catalog())
                 )
             else:
-                system_prompt += "\nSet the structured response actions field to []."
+                prompt_parts.append(
+                    "The top-level JSON actions field must be []. Do not discuss tools or actions."
+                )
 
+            system_prompt = "\n\n".join(part for part in prompt_parts if part)
             history_text = format_history(
                 session.history, max_chars=self._history_context_max_chars
             )
@@ -224,9 +296,7 @@ class AssistantManager:
             messages.append(
                 ChatMessage(
                     role="user",
-                    content=format_current_speaker(
-                        user_id, clean_name, clean_text
-                    ),
+                    content=format_current_speaker(user_id, clean_name, clean_text),
                 )
             )
 
@@ -238,11 +308,25 @@ class AssistantManager:
                 raw_response = await self._llm.chat(messages)
                 llm_seconds = time.monotonic() - llm_started
 
+            parse_started = time.monotonic()
             parsed_response: ParsedMemoryResponse = parse_memory_response(raw_response)
             response_text = enforce_owner_addressing(parsed_response.text, identity)
             candidate = explicit_candidate or (
                 parsed_response.candidate if memory_enabled else None
             )
+            expression = parse_expression_response(raw_response)
+            actions = ()
+            if action_planning and self.action_registry is not None:
+                actions = parse_action_response(raw_response)
+                if not actions:
+                    actions = infer_safe_actions_from_text(clean_text)
+                    if actions:
+                        print(
+                            "[SENA ACTION] planner fallback tools="
+                            + ",".join(action.tool for action in actions)
+                        )
+            parse_seconds = time.monotonic() - parse_started
+
             if candidate is not None:
                 try:
                     await self.memory.apply_action(identity, candidate, source)
@@ -281,27 +365,19 @@ class AssistantManager:
             )
             self.sessions.touch(session)
 
-            actions = ()
-            if self.action_registry is not None and source == "discord_text":
-                actions = parse_action_response(raw_response)
-                if not actions:
-                    actions = infer_safe_actions_from_text(clean_text)
-                    if actions:
-                        print(
-                            "[SENA ACTION] planner fallback tools="
-                            + ",".join(action.tool for action in actions)
-                        )
-
             print(
                 f"[SENA PERF] channel={channel_id} prompt_chars={prompt_chars} "
+                f"system_chars={len(system_prompt)} history_chars={len(history_text)} "
+                f"action_plan={'on' if action_planning else 'off'} "
                 f"memory={memory_seconds:.3f}s queue={queue_seconds:.3f}s "
-                f"llm={llm_seconds:.3f}s total={time.monotonic()-total_started:.3f}s "
+                f"llm={llm_seconds:.3f}s parse={parse_seconds:.3f}s "
+                f"total={time.monotonic()-total_started:.3f}s "
                 f"planned_actions={len(actions)}"
             )
             return AssistantResponse(
                 text=response_text,
                 memory_action=candidate,
-                expression=parse_expression_response(raw_response),
+                expression=expression,
                 actions=actions,
             )
 
@@ -398,6 +474,12 @@ def build_assistant_manager() -> AssistantManager:
         )
 
     device = detect_device()
+    memory_limit = _positive_int_env(
+        "SENA_MEMORY_RETRIEVE_LIMIT", 2 if device.is_android else 5
+    )
+    memory_chars = _positive_int_env(
+        "SENA_MEMORY_CONTEXT_MAX_CHARS", 1000 if device.is_android else 2500
+    )
     return AssistantManager(
         PersonalityManager(SENA_PERSONALITY_FILE),
         AudiencePersonalityManager(SENA_AUDIENCE_PERSONALITY_FILE),
@@ -411,8 +493,8 @@ def build_assistant_manager() -> AssistantManager:
         MemoryManager(
             MemoryStore(Path("data/sena_memory.db")),
             MemoryPolicy(0.55, 0.70, 500),
-            3 if device.is_android else 5,
-            1600 if device.is_android else 2500,
+            memory_limit,
+            memory_chars,
         ),
     )
 
