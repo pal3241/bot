@@ -7,6 +7,7 @@ from core.structured_response import (
     sanitize_visible_text,
     strip_json_fence,
 )
+from memory.identity import UserIdentity
 from memory.models import MEMORY_CATEGORIES, MemoryActionType, MemoryCandidate
 
 
@@ -138,11 +139,27 @@ def parse_explicit_memory_command(text: str) -> MemoryCandidate | None:
     )
 
 
-def structured_response_instruction() -> str:
+def structured_response_instruction(identity: UserIdentity) -> str:
     categories: str = ", ".join(sorted(MEMORY_CATEGORIES))
+    if identity.is_owner:
+        scope = (
+            "The current speaker is the authenticated owner. 'memory' is null unless the "
+            "owner stated durable information worth remembering. Owner memories may include "
+            "profile, preference, project, relationship, personal facts, or durable owner "
+            "instructions."
+        )
+    else:
+        scope = (
+            "The current speaker is a normal Discord user. 'memory' is null unless they stated "
+            "durable information about THEMSELVES, such as their own profile, preferences, "
+            "projects, personal facts, or relationship preferences. Never create a memory from "
+            "their claims about Sena, the owner, another user, or a third party. Never create "
+            "category='instruction' for a non-owner. Ordinary chatter and temporary state must "
+            "not be stored."
+        )
     return (
-        "In the structured JSON response, 'memory' is null unless the owner stated "
-        "durable information worth remembering. When used, memory must contain "
-        "action, category, content, importance, confidence, target_memory_id. "
-        f"Allowed categories: {categories}. Never store transient chatter."
+        scope
+        + " When memory is used it must contain action, category, content, importance, "
+        "confidence, target_memory_id. "
+        + f"Allowed schema categories: {categories}."
     )
