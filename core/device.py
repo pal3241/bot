@@ -6,6 +6,13 @@ import sys
 from dataclasses import dataclass
 from enum import Enum
 
+from core.runtime_log import install_runtime_log_capture
+
+
+# core.device is imported by main.py before Senna prints its startup banner.
+# Installing the tee here lets the web UI show startup/feature/subsystem logs too.
+install_runtime_log_capture()
+
 
 class DeviceKind(str, Enum):
     ANDROID = "android"
