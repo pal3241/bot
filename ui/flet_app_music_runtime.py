@@ -11,7 +11,7 @@ class SenaFletUI(_BaseSenaFletUI):
 
     Discord actions and Flet controls operate on the same MusicManager. The UI mirrors
     runtime changes continuously, but an actively edited volume field is protected until
-    the user applies it or changes server.
+    the user applies it, changes server, or reopens the Music panel.
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -28,6 +28,12 @@ class SenaFletUI(_BaseSenaFletUI):
     async def _music_volume_changed(self, e: Any = None) -> None:
         del e
         self._music_volume_dirty = True
+
+    def _music(self):
+        # Opening/reopening Music means the runtime becomes authoritative again. This
+        # avoids a stale unapplied browser edit blocking a later Discord volume command.
+        self._music_volume_dirty = False
+        return super()._music()
 
     async def _music_guild_changed(self, e: Any = None) -> None:
         self._music_volume_dirty = False
