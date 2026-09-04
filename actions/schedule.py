@@ -1,0 +1,231 @@
+from __future__ import annotations
+
+import os
+import re
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from actions.models import ActionRequest, ActionResult, ActionRisk, ActionStatus
+from actions.registry import ActionContext, ActionRegistry, ActionSpec
+from scheduler.manager import SchedulerManager
+
+
+_TIMEZONE_NAME = os.getenv("SENA_TIMEZONE", "Asia/Jakarta").strip() or "Asia/Jakarta"
+_MENTION_RE = re.compile(r"^<@!?(\d+)>$")
+
+
+def _positive_int(value: object, field: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"{field} tidak valid.")
+    if isinstance(value, int):
+        number = value
+    elif isinstance(value, str):
+        text = value.strip()
+        mention = _MENTION_RE.fullmatch(text)
+        if mention is not None:
+            text = mention.group(1)
+        if not text.isdecimal():
+            raise ValueError(f"{field} harus berupa Discord ID.")
+        number = int(text)
+    else:
+        raise ValueError(f"{field} harus berupa angka/Discord ID.")
+    if number <= 0:
+        raise ValueError(f"{field} harus lebih besar dari 0.")
+    return number
+
+
+def _number(value: object, field: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field} harus berupa angka.")
+    return float(value)
+
+
+def _local_time(iso_value: str) -> str:
+    dt = datetime.fromisoformat(iso_value.replace("Z", "+00:00"))
+    try:
+        zone = ZoneInfo(_TIMEZONE_NAME)
+    except Exception:
+        zone = ZoneInfo("UTC")
+    return dt.astimezone(zone).strftime("%Y-%m-%d %H:%M:%S %Z")
+
+
+def _auto_mention(context: ActionContext) -> int | None:
+    bot_id = context.client.user.id if context.client.user is not None else None
+    for user in context.message.mentions:
+        if user.bot:
+            continue
+        if bot_id is not None and user.id == bot_id:
+            continue
+        return user.id
+    return None
+
+
+async def _create_handler(
+    scheduler: SchedulerManager,
+    context: ActionContext,
+    request: ActionRequest,
+) -> ActionResult:
+    args = request.arguments
+    content_value = args.get("message", args.get("content", args.get("text")))
+    if not isinstance(content_value, str) or not content_value.strip():
+        return ActionResult(
+            request.tool,
+            ActionStatus.REJECTED,
+            "argument message wajib diisi",
+        )
+
+    try:
+        channel_id = _positive_int(args.get("channel_id"), "channel_id")
+        mention_user_id = _positive_int(args.get("mention_user_id"), "mention_user_id")
+        recurrence_seconds = _positive_int(
+            args.get("recurrence_seconds"), "recurrence_seconds"
+        )
+        delay_seconds = _number(args.get("delay_seconds"), "delay_seconds")
+    except ValueError as error:
+        return ActionResult(request.tool, ActionStatus.REJECTED, str(error))
+
+    if mention_user_id is None:
+        mention_user_id = _auto_mention(context)
+
+    run_at_value = args.get("run_at")
+    run_at = run_at_value.strip() if isinstance(run_at_value, str) else None
+
+    try:
+        item = await scheduler.create(
+            guild_id=context.message.guild.id if context.message.guild else None,
+            channel_id=channel_id or context.message.channel.id,
+            creator_id=context.message.author.id,
+            content=content_value,
+            mention_user_id=mention_user_id,
+            run_at=run_at,
+            delay_seconds=delay_seconds,
+            recurrence_seconds=recurrence_seconds,
+        )
+    except (RuntimeError, ValueError) as error:
+        return ActionResult(request.tool, ActionStatus.REJECTED, str(error))
+
+    mention = f" · tag=<@{item.mention_user_id}>" if item.mention_user_id else ""
+    repeat = (
+        f" · ulang={item.recurrence_seconds}s"
+        if item.recurrence_seconds is not None
+        else ""
+    )
+    return ActionResult(
+        request.tool,
+        ActionStatus.SUCCESS,
+        f"Schedule #{item.id} dibuat · {_local_time(item.next_run_at)}{mention}{repeat}",
+    )
+
+
+async def _list_handler(
+    scheduler: SchedulerManager,
+    context: ActionContext,
+    request: ActionRequest,
+) -> ActionResult:
+    del request
+    items = await scheduler.list_for_user(
+        context.message.author.id,
+        include_all=context.is_owner,
+    )
+    if not items:
+        return ActionResult("schedule.list", ActionStatus.SUCCESS, "Tidak ada schedule aktif.")
+
+    lines: list[str] = []
+    for item in items[:20]:
+        owner = f" · by={item.creator_id}" if context.is_owner else ""
+        tag = f" · tag=<@{item.mention_user_id}>" if item.mention_user_id else ""
+        repeat = (
+            f" · setiap {item.recurrence_seconds}s"
+            if item.recurrence_seconds is not None
+            else ""
+        )
+        preview = item.content.replace("\n", " ").strip()
+        if len(preview) > 70:
+            preview = preview[:67] + "..."
+        lines.append(
+            f"#{item.id} · {_local_time(item.next_run_at)}{tag}{repeat}{owner} · {preview}"
+        )
+    if len(items) > 20:
+        lines.append(f"... +{len(items) - 20} schedule lain")
+    return ActionResult("schedule.list", ActionStatus.SUCCESS, "Schedule aktif:\n" + "\n".join(lines))
+
+
+async def _cancel_handler(
+    scheduler: SchedulerManager,
+    context: ActionContext,
+    request: ActionRequest,
+) -> ActionResult:
+    try:
+        schedule_id = _positive_int(request.arguments.get("schedule_id"), "schedule_id")
+    except ValueError as error:
+        return ActionResult(request.tool, ActionStatus.REJECTED, str(error))
+    if schedule_id is None:
+        return ActionResult(request.tool, ActionStatus.REJECTED, "schedule_id wajib diisi")
+
+    try:
+        cancelled = await scheduler.cancel(
+            schedule_id,
+            context.message.author.id,
+            is_owner=context.is_owner,
+        )
+    except PermissionError as error:
+        return ActionResult(request.tool, ActionStatus.REJECTED, str(error))
+    except RuntimeError as error:
+        return ActionResult(request.tool, ActionStatus.FAILED, str(error))
+
+    if not cancelled:
+        return ActionResult(
+            request.tool,
+            ActionStatus.REJECTED,
+            f"Schedule #{schedule_id} tidak ditemukan atau sudah nonaktif.",
+        )
+    return ActionResult(
+        request.tool,
+        ActionStatus.SUCCESS,
+        f"Schedule #{schedule_id} dibatalkan.",
+    )
+
+
+def register_schedule_actions(
+    registry: ActionRegistry,
+    scheduler: SchedulerManager,
+) -> None:
+    async def create(context: ActionContext, request: ActionRequest) -> ActionResult:
+        return await _create_handler(scheduler, context, request)
+
+    async def list_schedules(
+        context: ActionContext, request: ActionRequest
+    ) -> ActionResult:
+        return await _list_handler(scheduler, context, request)
+
+    async def cancel(context: ActionContext, request: ActionRequest) -> ActionResult:
+        return await _cancel_handler(scheduler, context, request)
+
+    registry.register(
+        ActionSpec(
+            "schedule.create",
+            "Create a Discord scheduled message. arguments: message(string), run_at(ISO-8601 with timezone) OR delay_seconds(number), optional mention_user_id(Discord user ID), optional recurrence_seconds(integer >=60), optional channel_id. If the user mentions one non-bot user and mention_user_id is omitted, that mention is used automatically.",
+            ActionRisk.MODERATE,
+            create,
+        )
+    )
+    registry.register(
+        ActionSpec(
+            "schedule.list",
+            "List active scheduled messages. Normal users see only their schedules; owner can see all. arguments: {}.",
+            ActionRisk.SAFE,
+            list_schedules,
+        )
+    )
+    registry.register(
+        ActionSpec(
+            "schedule.cancel",
+            "Cancel a scheduled message. arguments: schedule_id(integer). Normal users can cancel only their own; owner can cancel any schedule.",
+            ActionRisk.MODERATE,
+            cancel,
+        )
+    )
