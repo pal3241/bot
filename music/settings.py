@@ -5,6 +5,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 
+STREAM_PROFILES = ("low", "balanced", "high")
+
+
 @dataclass(frozen=True, slots=True)
 class MusicSettings:
     default_volume_percent: int = 35
@@ -13,6 +16,9 @@ class MusicSettings:
     max_playlist_items: int = 25
     ffmpeg_path: str = "ffmpeg"
     disconnect_on_stop: bool = False
+    # low: prefer <=96 kbps audio, balanced: <=128 kbps, high: best audio.
+    # Existing config files without this key automatically use low bandwidth mode.
+    stream_profile: str = "low"
 
 
 def _int(value: object, fallback: int, minimum: int, maximum: int) -> int:
@@ -27,6 +33,13 @@ def _bool(value: object, fallback: bool) -> bool:
     return value if isinstance(value, bool) else fallback
 
 
+def _stream_profile(value: object, fallback: str = "low") -> str:
+    if not isinstance(value, str):
+        return fallback
+    normalized = value.strip().casefold()
+    return normalized if normalized in STREAM_PROFILES else fallback
+
+
 def normalize_settings(value: MusicSettings) -> MusicSettings:
     max_volume = _int(value.max_volume_percent, 150, 1, 200)
     default_volume = _int(value.default_volume_percent, 35, 0, max_volume)
@@ -37,6 +50,7 @@ def normalize_settings(value: MusicSettings) -> MusicSettings:
         max_playlist_items=_int(value.max_playlist_items, 25, 1, 100),
         ffmpeg_path=(value.ffmpeg_path or "ffmpeg").strip() or "ffmpeg",
         disconnect_on_stop=bool(value.disconnect_on_stop),
+        stream_profile=_stream_profile(value.stream_profile),
     )
 
 
@@ -73,6 +87,9 @@ def load_music_settings(path: Path) -> MusicSettings:
         ),
         disconnect_on_stop=_bool(
             raw.get("disconnect_on_stop"), fallback.disconnect_on_stop
+        ),
+        stream_profile=_stream_profile(
+            raw.get("stream_profile"), fallback.stream_profile
         ),
     )
     return normalize_settings(settings)
