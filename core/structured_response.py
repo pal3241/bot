@@ -41,6 +41,14 @@ _ACTION_SELF_CLOSING_RE = re.compile(
     flags=re.IGNORECASE,
 )
 
+# Providers can also invent internal event markers such as [owner_joined_vc].
+# A bracketed snake_case token with at least one underscore is machine-like and
+# should never be rendered as conversational text.
+_MACHINE_EVENT_RE = re.compile(
+    r"^\[(?:[a-z0-9]+_){1,}[a-z0-9]+\]$",
+    flags=re.IGNORECASE,
+)
+
 
 def strip_json_fence(raw: str) -> str:
     cleaned: str = raw.strip()
@@ -125,6 +133,11 @@ def _is_identity_payload(line: str) -> bool:
     return False
 
 
+def _is_machine_event(line: str) -> bool:
+    normalized = _normalize_metadata_line(line)
+    return _MACHINE_EVENT_RE.fullmatch(normalized) is not None
+
+
 def _strip_action_protocol(raw: str) -> str:
     """Remove machine-only action tags while preserving surrounding prose."""
     cleaned = _ACTION_TAG_RE.sub("", raw)
@@ -136,8 +149,8 @@ def sanitize_visible_text(raw: str) -> str:
 
     The filter intentionally targets distinctive internal markers rather than normal
     conversational words. It handles valid/invalid structured output, escaped markdown
-    underscores, pipe-separated expression metadata, accidental prompt echoes, and
-    provider-specific action tags such as <action>[voice.join_user]</action>.
+    underscores, pipe-separated expression metadata, accidental prompt echoes,
+    provider-specific action tags, and internal event tokens such as [owner_joined_vc].
     """
 
     cleaned: str = _strip_action_protocol(strip_json_fence(raw)).strip()
@@ -185,7 +198,7 @@ def sanitize_visible_text(raw: str) -> str:
 
         if _is_expression_metadata(line) or _is_memory_metadata(line):
             continue
-        if _is_identity_payload(line):
+        if _is_identity_payload(line) or _is_machine_event(line):
             continue
 
         visible.append(raw_line.rstrip())
