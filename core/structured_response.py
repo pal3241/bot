@@ -29,9 +29,6 @@ _INTERNAL_CONTEXT_LABELS: tuple[str, ...] = (
     "[action output]",
 )
 
-# Some providers occasionally ignore the JSON-only protocol and emit machine actions
-# as XML-ish tags, for example: <action>[voice.join_user]</action>. These tags are
-# executor metadata and must never be shown to Discord users.
 _ACTION_TAG_RE = re.compile(
     r"<\s*actions?\b[^>]*>.*?<\s*/\s*actions?\s*>",
     flags=re.IGNORECASE | re.DOTALL,
@@ -40,12 +37,16 @@ _ACTION_SELF_CLOSING_RE = re.compile(
     r"<\s*actions?\b[^>]*/\s*>",
     flags=re.IGNORECASE,
 )
-
-# Providers can also invent internal event markers such as [owner_joined_vc].
-# A bracketed snake_case token with at least one underscore is machine-like and
-# should never be rendered as conversational text.
-_MACHINE_EVENT_RE = re.compile(
-    r"^\[(?:[a-z0-9]+_){1,}[a-z0-9]+\]$",
+_MACHINE_EVENT_INLINE_RE = re.compile(
+    r"\[(?:[a-z0-9]+_){1,}[a-z0-9]+\]",
+    flags=re.IGNORECASE,
+)
+_DISCORD_ASSET_MARKDOWN_RE = re.compile(
+    r"\[[^\]]*\]\(https://discord\.com/assets/[^)]+\)",
+    flags=re.IGNORECASE,
+)
+_DISCORD_ASSET_URL_RE = re.compile(
+    r"https://discord\.com/assets/\S+",
     flags=re.IGNORECASE,
 )
 
@@ -133,25 +134,20 @@ def _is_identity_payload(line: str) -> bool:
     return False
 
 
-def _is_machine_event(line: str) -> bool:
-    normalized = _normalize_metadata_line(line)
-    return _MACHINE_EVENT_RE.fullmatch(normalized) is not None
-
-
 def _strip_action_protocol(raw: str) -> str:
-    """Remove machine-only action tags while preserving surrounding prose."""
     cleaned = _ACTION_TAG_RE.sub("", raw)
     return _ACTION_SELF_CLOSING_RE.sub("", cleaned)
 
 
-def sanitize_visible_text(raw: str) -> str:
-    """Remove machine-only protocol/context before Discord ever sees it.
+def _strip_inline_machine_artifacts(raw: str) -> str:
+    cleaned = _MACHINE_EVENT_INLINE_RE.sub("", raw)
+    cleaned = _DISCORD_ASSET_MARKDOWN_RE.sub("", cleaned)
+    cleaned = _DISCORD_ASSET_URL_RE.sub("", cleaned)
+    return re.sub(r"[ \t]{2,}", " ", cleaned).strip()
 
-    The filter intentionally targets distinctive internal markers rather than normal
-    conversational words. It handles valid/invalid structured output, escaped markdown
-    underscores, pipe-separated expression metadata, accidental prompt echoes,
-    provider-specific action tags, and internal event tokens such as [owner_joined_vc].
-    """
+
+def sanitize_visible_text(raw: str) -> str:
+    """Remove machine-only protocol/context before Discord ever sees it."""
 
     cleaned: str = _strip_action_protocol(strip_json_fence(raw)).strip()
     if not cleaned:
@@ -198,10 +194,12 @@ def sanitize_visible_text(raw: str) -> str:
 
         if _is_expression_metadata(line) or _is_memory_metadata(line):
             continue
-        if _is_identity_payload(line) or _is_machine_event(line):
+        if _is_identity_payload(line):
             continue
 
-        visible.append(raw_line.rstrip())
+        cleaned_line = _strip_inline_machine_artifacts(raw_line.rstrip())
+        if cleaned_line:
+            visible.append(cleaned_line)
 
     result: str = "\n".join(visible).strip()
     if result.casefold().startswith("text:"):
