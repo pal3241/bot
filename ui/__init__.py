@@ -1,3 +1,3 @@
-from ui.flet_app_html_upload import SenaFletUI
+from ui.flet_app_schedule import SenaFletUI
 
 __all__ = ["SenaFletUI"]
