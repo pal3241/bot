@@ -1,5 +1,5 @@
 {
-  "default_volume_percent": 70,
+  "default_volume_percent": 35,
   "max_volume_percent": 150,
   "search_limit": 5,
   "max_playlist_items": 25,
