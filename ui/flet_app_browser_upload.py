@@ -32,7 +32,13 @@ class SenaFletUI(_BaseSenaFletUI):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._browser_emoji_files: list[ft.FilePickerFile] = []
-        self.emoji_file_picker = ft.FilePicker(on_result=self._emoji_browser_pick_result)
+
+        # Keep FilePicker construction intentionally argument-free. Some Flet builds
+        # expose on_result as an event property but do not accept it in __init__().
+        # Assigning the handler after construction works across both API shapes.
+        self.emoji_file_picker = ft.FilePicker()
+        self.emoji_file_picker.on_result = self._emoji_browser_pick_result
+
         self.emoji_browser_files = ft.Text(
             "Belum ada file dipilih.",
             size=11,
@@ -95,7 +101,7 @@ class SenaFletUI(_BaseSenaFletUI):
         return self._emoji_name_for_path(
             Path(file_name),
             existing,
-            requested=requested_name,
+            requested_name=requested_name,
         )
 
     async def _emoji_browser_upload_selected(self, e: Any) -> None:
