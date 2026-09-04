@@ -32,6 +32,7 @@ LLM_RETRY_DELAY_SECONDS: float = 1.0
 SENA_CHAT_TIMEOUT_SECONDS: float = 120.0
 SENA_HISTORY_MAX_MESSAGES: int = 20
 SENA_PERSONALITY_FILE: Path = Path("config/personality.json")
+SENA_AUDIENCE_PERSONALITY_FILE: Path = Path("config/personality_audience.json")
 STT_SETTINGS_FILE: Path = Path("data/stt_settings.json")
 STT_PROVIDER: str = "faster_whisper"
 STT_MODEL: str = "small"
