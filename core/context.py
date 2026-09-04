@@ -6,6 +6,7 @@ import discord
 if TYPE_CHECKING:
     from assistant.manager import AssistantManager
     from core.device import DeviceInfo
+    from music.manager import MusicManager
     from scheduler.manager import SchedulerManager
 
 
@@ -15,6 +16,7 @@ class AppContext:
     assistant: "AssistantManager | None" = None
     device: "DeviceInfo | None" = None
     scheduler: "SchedulerManager | None" = None
+    music: "MusicManager | None" = None
     guild: discord.Guild | None = None
     channel: discord.TextChannel | None = None
     voice_channel: discord.VoiceChannel | None = None
@@ -31,3 +33,8 @@ class AppContext:
         if self.scheduler is None:
             raise RuntimeError("Scheduler tidak aktif pada runtime ini.")
         return self.scheduler
+
+    def require_music(self) -> "MusicManager":
+        if self.music is None:
+            raise RuntimeError("Music Manager tidak aktif pada runtime ini.")
+        return self.music
