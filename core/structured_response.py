@@ -26,6 +26,19 @@ _INTERNAL_CONTEXT_LABELS: tuple[str, ...] = (
     "[relevant private owner memory]",
     "[expression output]",
     "[memory output]",
+    "[action output]",
+)
+
+# Some providers occasionally ignore the JSON-only protocol and emit machine actions
+# as XML-ish tags, for example: <action>[voice.join_user]</action>. These tags are
+# executor metadata and must never be shown to Discord users.
+_ACTION_TAG_RE = re.compile(
+    r"<\s*actions?\b[^>]*>.*?<\s*/\s*actions?\s*>",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+_ACTION_SELF_CLOSING_RE = re.compile(
+    r"<\s*actions?\b[^>]*/\s*>",
+    flags=re.IGNORECASE,
 )
 
 
@@ -112,16 +125,22 @@ def _is_identity_payload(line: str) -> bool:
     return False
 
 
+def _strip_action_protocol(raw: str) -> str:
+    """Remove machine-only action tags while preserving surrounding prose."""
+    cleaned = _ACTION_TAG_RE.sub("", raw)
+    return _ACTION_SELF_CLOSING_RE.sub("", cleaned)
+
+
 def sanitize_visible_text(raw: str) -> str:
     """Remove machine-only protocol/context before Discord ever sees it.
 
     The filter intentionally targets distinctive internal markers rather than normal
     conversational words. It handles valid/invalid structured output, escaped markdown
-    underscores, pipe-separated expression metadata, and accidental echoes of the
-    current-speaker/current-message prompt blocks.
+    underscores, pipe-separated expression metadata, accidental prompt echoes, and
+    provider-specific action tags such as <action>[voice.join_user]</action>.
     """
 
-    cleaned: str = strip_json_fence(raw).strip()
+    cleaned: str = _strip_action_protocol(strip_json_fence(raw)).strip()
     if not cleaned:
         return ""
 
@@ -133,7 +152,6 @@ def sanitize_visible_text(raw: str) -> str:
         line: str = raw_line.strip()
         normalized: str = _normalize_metadata_line(line)
 
-        # A model can flatten the whole prompt into one line. Never expose such a line.
         if _contains_internal_context_label(line):
             if normalized in {"[current speaker]", "[current message]"}:
                 skip_context_payload_lines = 1
