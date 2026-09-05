@@ -51,6 +51,11 @@ class SenaFletUI(_BaseSenaFletUI):
             hint_text="kosong = sekali jalan",
             border_color=BORDER,
         )
+        self.schedule_max_retries = ft.TextField(
+            label="Max retries",
+            value="5",
+            border_color=BORDER,
+        )
         self.schedule_cancel = ft.Dropdown(label="Schedule aktif", expand=True)
         self.schedule_status = ft.Text("", size=11, color=MUTED)
         self.schedule_list = ft.Text(
@@ -129,6 +134,8 @@ class SenaFletUI(_BaseSenaFletUI):
             delay_seconds = None if run_at else float(delay_raw)
             repeat_raw = (self.schedule_repeat.value or "").strip()
             recurrence_seconds = int(float(repeat_raw)) if repeat_raw else None
+            max_retries_raw = (self.schedule_max_retries.value or "").strip()
+            max_retries = int(float(max_retries_raw)) if max_retries_raw else None
 
             guild_id = int(self.schedule_guild.value) if self.schedule_guild.value else None
             item = await scheduler.create(
@@ -140,6 +147,7 @@ class SenaFletUI(_BaseSenaFletUI):
                 run_at=run_at,
                 delay_seconds=delay_seconds,
                 recurrence_seconds=recurrence_seconds,
+                max_retries=max_retries,
             )
             tag = f" · tag=<@{item.mention_user_id}>" if item.mention_user_id else ""
             self.schedule_status.value = (
@@ -194,10 +202,17 @@ class SenaFletUI(_BaseSenaFletUI):
                     if item.recurrence_seconds
                     else ""
                 )
+                retry = (
+                    f" · retry={item.retry_count}/{item.max_retries}"
+                    if item.retry_count or item.last_error
+                    else f" · max_retries={item.max_retries}"
+                )
+                error = f" · last_error={item.last_error}" if item.last_error else ""
                 preview = self._schedule_payload_preview(item)
                 lines.append(
                     f"#{item.id} · {item.job_type} · "
-                    f"{self._schedule_local_time(item.next_run_at)}{tag}{repeat} · {preview}"
+                    f"{self._schedule_local_time(item.next_run_at)}{tag}{repeat}"
+                    f"{retry}{error} · {preview}"
                 )
             self.schedule_list.value = "\n".join(lines) or "Tidak ada schedule aktif."
         except Exception as error:
@@ -231,6 +246,36 @@ class SenaFletUI(_BaseSenaFletUI):
                 await self._refresh_schedule()
             except Exception as error:
                 self.schedule_status.value = f"Cancel gagal · {type(error).__name__}: {error}"
+                self.schedule_status.color = ERROR
+        if self.page:
+            self.page.update()
+
+    async def _run_schedule_now(self, e: Any) -> None:
+        del e
+        scheduler = self.ctx.scheduler
+        if scheduler is None or not scheduler.available:
+            self.schedule_status.value = "Scheduler tidak aktif."
+            self.schedule_status.color = ERROR
+        elif not self.schedule_cancel.value:
+            self.schedule_status.value = "Pilih schedule yang akan dijalankan."
+            self.schedule_status.color = ERROR
+        else:
+            try:
+                schedule_id = int(self.schedule_cancel.value)
+                changed = await scheduler.run_now(
+                    schedule_id,
+                    self._schedule_creator_id(),
+                    is_owner=True,
+                )
+                self.schedule_status.value = (
+                    f"Schedule #{schedule_id} diset run now."
+                    if changed
+                    else f"Schedule #{schedule_id} sudah tidak aktif."
+                )
+                self.schedule_status.color = SUCCESS if changed else MUTED
+                await self._refresh_schedule()
+            except Exception as error:
+                self.schedule_status.value = f"Run now gagal · {type(error).__name__}: {error}"
                 self.schedule_status.color = ERROR
         if self.page:
             self.page.update()
@@ -297,6 +342,7 @@ class SenaFletUI(_BaseSenaFletUI):
                                     ft.Container(col={"xs": 12, "md": 6}, content=self.schedule_run_at),
                                     ft.Container(col={"xs": 12, "md": 6}, content=self.schedule_delay),
                                     ft.Container(col={"xs": 12, "md": 6}, content=self.schedule_repeat),
+                                    ft.Container(col={"xs": 12, "md": 6}, content=self.schedule_max_retries),
                                 ]
                             ),
                             ft.Text(
@@ -324,6 +370,11 @@ class SenaFletUI(_BaseSenaFletUI):
                                 ]
                             ),
                             self.schedule_cancel,
+                            ft.Button(
+                                "Run selected now",
+                                icon=ft.Icons.PLAY_ARROW,
+                                on_click=self._run_schedule_now,
+                            ),
                             ft.Button(
                                 "Cancel selected",
                                 icon=ft.Icons.DELETE_OUTLINE,

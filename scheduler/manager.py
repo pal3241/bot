@@ -17,7 +17,9 @@ MAX_ACTIVE_PER_USER = 25
 MIN_RECURRENCE_SECONDS = 60
 MAX_MESSAGE_LENGTH = 1800
 MAX_PAYLOAD_JSON_LENGTH = 12000
-RETRY_DELAY_SECONDS = 60
+DEFAULT_MAX_RETRIES = 5
+RETRY_BACKOFF_SECONDS = (30, 60, 120, 300)
+MAX_CONCURRENT_DUE_JOBS = 4
 
 
 def _parse_run_at(value: str) -> datetime:
@@ -119,6 +121,23 @@ class SchedulerManager:
             )
         return recurrence
 
+    def _validate_max_retries(self, max_retries: int | None) -> int:
+        if max_retries is None:
+            return DEFAULT_MAX_RETRIES
+        value = int(max_retries)
+        if value < 0:
+            raise ValueError("max_retries tidak boleh negatif.")
+        if value > 20:
+            raise ValueError("max_retries maksimal 20.")
+        return value
+
+    @staticmethod
+    def _retry_delay_seconds(retry_count: int) -> int:
+        if retry_count <= 0:
+            return RETRY_BACKOFF_SECONDS[0]
+        index = min(retry_count - 1, len(RETRY_BACKOFF_SECONDS) - 1)
+        return RETRY_BACKOFF_SECONDS[index]
+
     async def create_job(
         self,
         *,
@@ -130,6 +149,7 @@ class SchedulerManager:
         run_at: str | None = None,
         delay_seconds: float | int | None = None,
         recurrence_seconds: int | None = None,
+        max_retries: int | None = None,
     ) -> ScheduledJob:
         if not self.available:
             raise RuntimeError("Scheduler belum aktif.")
@@ -156,6 +176,7 @@ class SchedulerManager:
 
         when = self._resolve_when(run_at=run_at, delay_seconds=delay_seconds)
         recurrence = self._validate_recurrence(recurrence_seconds)
+        retry_limit = self._validate_max_retries(max_retries)
         return await self.store.create(
             guild_id=guild_id,
             channel_id=int(channel_id),
@@ -164,6 +185,7 @@ class SchedulerManager:
             payload=dict(payload),
             next_run_at=_iso_utc(when),
             recurrence_seconds=recurrence,
+            max_retries=retry_limit,
         )
 
     async def create(
@@ -177,6 +199,7 @@ class SchedulerManager:
         run_at: str | None = None,
         delay_seconds: float | int | None = None,
         recurrence_seconds: int | None = None,
+        max_retries: int | None = None,
     ) -> ScheduledJob:
         """Backward-compatible helper for the original scheduled-message feature."""
         clean = content.strip()
@@ -199,6 +222,7 @@ class SchedulerManager:
             run_at=run_at,
             delay_seconds=delay_seconds,
             recurrence_seconds=recurrence_seconds,
+            max_retries=max_retries,
         )
 
     async def list_for_user(
@@ -219,6 +243,21 @@ class SchedulerManager:
         if not is_owner and record.creator_id != requester_id:
             raise PermissionError("Schedule itu bukan milikmu.")
         return await self.store.cancel(schedule_id)
+
+    async def run_now(
+        self, schedule_id: int, requester_id: int, *, is_owner: bool
+    ) -> bool:
+        if not self.available:
+            raise RuntimeError("Scheduler belum aktif.")
+        record = await self.store.get(schedule_id)
+        if record is None or not record.active:
+            return False
+        if not is_owner and record.creator_id != requester_id:
+            raise PermissionError("Schedule itu bukan milikmu.")
+        return await self.store.run_now(
+            schedule_id,
+            _iso_utc(datetime.now(timezone.utc)),
+        )
 
     async def _resolve_channel(self, channel_id: int) -> Any:
         channel = self.client.get_channel(channel_id)
@@ -267,11 +306,33 @@ class SchedulerManager:
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            retry_at = now + timedelta(seconds=RETRY_DELAY_SECONDS)
-            await self.store.defer(item.id, _iso_utc(retry_at))
+            error_detail = f"{type(error).__name__}: {error}"
+            next_retry_count = item.retry_count + 1
+            if next_retry_count >= item.max_retries:
+                await self.store.mark_failed(
+                    item.id,
+                    _iso_utc(now),
+                    retry_count=next_retry_count,
+                    last_error=error_detail,
+                )
+                print(
+                    f"[SENA SCHEDULE] job failed id={item.id} type={item.job_type} "
+                    f"retry={next_retry_count}/{item.max_retries} final=yes "
+                    f"error={error_detail}"
+                )
+                return
+            delay = self._retry_delay_seconds(next_retry_count)
+            retry_at = now + timedelta(seconds=delay)
+            await self.store.defer(
+                item.id,
+                _iso_utc(retry_at),
+                retry_count=next_retry_count,
+                last_error=error_detail,
+            )
             print(
                 f"[SENA SCHEDULE] job failed id={item.id} type={item.job_type} "
-                f"error={type(error).__name__}: {error}; retry=60s"
+                f"retry={next_retry_count}/{item.max_retries} "
+                f"error={error_detail}; retry={delay}s"
             )
             return
 
@@ -298,8 +359,14 @@ class SchedulerManager:
             try:
                 now = datetime.now(timezone.utc)
                 due = await self.store.due(_iso_utc(now))
-                for item in due:
-                    await self._execute_due(item, now)
+                if due:
+                    semaphore = asyncio.Semaphore(MAX_CONCURRENT_DUE_JOBS)
+
+                    async def run_item(item: ScheduledJob) -> None:
+                        async with semaphore:
+                            await self._execute_due(item, now)
+
+                    await asyncio.gather(*(run_item(item) for item in due))
             except asyncio.CancelledError:
                 raise
             except Exception as error:
