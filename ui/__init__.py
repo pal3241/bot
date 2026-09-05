@@ -1,3 +1,3 @@
-from ui.flet_app_music_bandwidth import SenaFletUI
+from ui.flet_app_voice_split import SenaFletUI
 
 __all__ = ["SenaFletUI"]
