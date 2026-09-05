@@ -21,6 +21,7 @@ class LLMManager:
         providers: dict[str, LLMProvider] | None = None,
         routes: dict[RoutingTier, ModelTarget] | None = None,
         fallback_targets: tuple[ModelTarget, ...] = (),
+        tier_fallback_targets: dict[RoutingTier, tuple[ModelTarget, ...]] | None = None,
         json_prefill_enabled: bool = True,
         prompt_cache_enabled: bool = True,
     ) -> None:
@@ -36,6 +37,7 @@ class LLMManager:
             **(routes or {}),
         }
         self._fallback_targets = fallback_targets
+        self._tier_fallback_targets = dict(tier_fallback_targets or {})
         self._json_prefill_enabled = json_prefill_enabled
         self._prompt_cache_enabled = prompt_cache_enabled
         self._provider_name = primary.provider_name
@@ -55,7 +57,8 @@ class LLMManager:
         return self._target_label(self._routes[tier])
 
     def _candidates(self, tier: RoutingTier) -> tuple[ModelTarget, ...]:
-        ordered = (self._routes[tier], *self._fallback_targets)
+        tier_fallbacks = self._tier_fallback_targets.get(tier, self._fallback_targets)
+        ordered = (self._routes[tier], *tier_fallbacks)
         seen: set[tuple[str, str]] = set()
         result: list[ModelTarget] = []
         for target in ordered:

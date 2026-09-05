@@ -523,6 +523,35 @@ def build_assistant_manager() -> AssistantManager:
             retry_delay_seconds=LLM_RETRY_DELAY_SECONDS,
             chat_timeout_seconds=SENA_CHAT_TIMEOUT_SECONDS,
             history_max_messages=SENA_HISTORY_MAX_MESSAGES,
+            routing_enabled=_boolean_env(
+                "LLM_ROUTING_ENABLED", LLM_ROUTING_ENABLED
+            ),
+            fast_provider=os.getenv("LLM_FAST_PROVIDER", "").strip().casefold()
+            or "primary",
+            fast_model=os.getenv("LLM_FAST_MODEL", "").strip(),
+            standard_provider=os.getenv(
+                "LLM_STANDARD_PROVIDER", ""
+            ).strip().casefold()
+            or "primary",
+            standard_model=os.getenv("LLM_STANDARD_MODEL", "").strip(),
+            complex_provider=os.getenv(
+                "LLM_COMPLEX_PROVIDER", LLM_COMPLEX_PROVIDER
+            ).strip().casefold(),
+            complex_model=os.getenv(
+                "LLM_COMPLEX_MODEL", LLM_COMPLEX_MODEL
+            ).strip(),
+            fallback_provider=os.getenv(
+                "LLM_FALLBACK_PROVIDER", LLM_FALLBACK_PROVIDER
+            ).strip().casefold(),
+            fallback_model=os.getenv(
+                "LLM_FALLBACK_MODEL", LLM_FALLBACK_MODEL
+            ).strip(),
+            json_prefill_enabled=_boolean_env(
+                "LLM_JSON_PREFILL_ENABLED", LLM_JSON_PREFILL_ENABLED
+            ),
+            prompt_cache_enabled=_boolean_env(
+                "LLM_PROMPT_CACHE_ENABLED", LLM_PROMPT_CACHE_ENABLED
+            ),
         ),
     )
     raw_owner_id = os.getenv("SENA_OWNER_ID")
@@ -569,20 +598,35 @@ def _model_for_provider(settings: AISettings, provider_name: str) -> str:
 
 
 def _route_target(
-    provider_env: str,
-    model_env: str,
-    default_provider: str,
-    default_model: str,
+    settings: AISettings,
+    provider_name: str,
+    model: str,
+    primary: ModelTarget,
 ) -> ModelTarget:
-    provider = os.getenv(provider_env, "").strip().casefold() or default_provider
-    model = os.getenv(model_env, "").strip()
-    if not model:
-        model = default_model if provider == default_provider else ""
-    if not model:
-        raise LLMConfigurationError(
-            f"{model_env} wajib diisi ketika {provider_env}={provider}."
-        )
-    return ModelTarget(provider, model)
+    provider = provider_name.strip().casefold()
+    clean_model = model.strip()
+    if provider == "primary":
+        return ModelTarget(primary.provider_name, clean_model or primary.model)
+    return ModelTarget(provider, clean_model or _model_for_provider(settings, provider))
+
+
+def _fast_safe_target(settings: AISettings, target: ModelTarget) -> ModelTarget:
+    if target.provider_name != "nvidia_nim":
+        return target
+    print(
+        "[SENA ROUTER] fast route refused slow provider=nvidia_nim; "
+        "using openrouter instead"
+    )
+    return ModelTarget("openrouter", settings.openrouter_model)
+
+
+def _openrouter_fallback(settings: AISettings) -> ModelTarget:
+    fallback_model = (
+        settings.fallback_model.strip()
+        if settings.fallback_provider == "openrouter"
+        else ""
+    )
+    return ModelTarget("openrouter", fallback_model or settings.openrouter_model)
 
 
 def build_llm_manager(settings: AISettings) -> LLMManager:
@@ -590,37 +634,41 @@ def build_llm_manager(settings: AISettings) -> LLMManager:
         settings.provider_name,
         _model_for_provider(settings, settings.provider_name),
     )
-    routing_enabled = _boolean_env("LLM_ROUTING_ENABLED", LLM_ROUTING_ENABLED)
+    routing_enabled = settings.routing_enabled
 
     if routing_enabled:
-        fast = _route_target(
-            "LLM_FAST_PROVIDER",
-            "LLM_FAST_MODEL",
-            primary.provider_name,
-            primary.model,
+        fast = _fast_safe_target(
+            settings,
+            _route_target(
+                settings,
+                settings.fast_provider,
+                settings.fast_model,
+                primary,
+            ),
         )
         standard = _route_target(
-            "LLM_STANDARD_PROVIDER",
-            "LLM_STANDARD_MODEL",
-            primary.provider_name,
-            primary.model,
+            settings,
+            settings.standard_provider,
+            settings.standard_model,
+            primary,
         )
         complex_target = _route_target(
-            "LLM_COMPLEX_PROVIDER",
-            "LLM_COMPLEX_MODEL",
-            LLM_COMPLEX_PROVIDER,
-            LLM_COMPLEX_MODEL,
+            settings,
+            settings.complex_provider,
+            settings.complex_model,
+            primary,
         )
         fallback = _route_target(
-            "LLM_FALLBACK_PROVIDER",
-            "LLM_FALLBACK_MODEL",
-            LLM_FALLBACK_PROVIDER,
-            LLM_FALLBACK_MODEL,
+            settings,
+            settings.fallback_provider,
+            settings.fallback_model,
+            primary,
         )
     else:
         fast = standard = complex_target = fallback = primary
 
-    targets = (primary, fast, standard, complex_target, fallback)
+    fast_fallback = _openrouter_fallback(settings)
+    targets = (primary, fast, standard, complex_target, fallback, fast_fallback)
     providers: dict[str, object] = {}
     for provider_name in dict.fromkeys(target.provider_name for target in targets):
         try:
@@ -652,12 +700,11 @@ def build_llm_manager(settings: AISettings) -> LLMManager:
             RoutingTier.COMPLEX: complex_target,
         },
         fallback_targets=(fallback, primary),
-        json_prefill_enabled=_boolean_env(
-            "LLM_JSON_PREFILL_ENABLED",
-            LLM_JSON_PREFILL_ENABLED,
-        ),
-        prompt_cache_enabled=_boolean_env(
-            "LLM_PROMPT_CACHE_ENABLED",
-            LLM_PROMPT_CACHE_ENABLED,
-        ),
+        tier_fallback_targets={
+            RoutingTier.FAST: (fast_fallback,),
+            RoutingTier.STANDARD: (fast_fallback,),
+            RoutingTier.COMPLEX: (fallback, primary),
+        },
+        json_prefill_enabled=settings.json_prefill_enabled,
+        prompt_cache_enabled=settings.prompt_cache_enabled,
     )

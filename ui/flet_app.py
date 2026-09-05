@@ -1122,6 +1122,23 @@ class SenaFletUI:
                     retry_delay_seconds=float(self.ai_retry_delay.value or "0"),
                     chat_timeout_seconds=float(self.ai_chat_timeout.value or "0"),
                     history_max_messages=int(self.ai_history.value or "0"),
+                    routing_enabled=bool(self.ai_routing_enabled.value),
+                    fast_provider=str(self.ai_fast_provider.value or "primary"),
+                    fast_model=(self.ai_fast_model.value or "").strip(),
+                    standard_provider=str(
+                        self.ai_standard_provider.value or "primary"
+                    ),
+                    standard_model=(self.ai_standard_model.value or "").strip(),
+                    complex_provider=str(
+                        self.ai_complex_provider.value or "nvidia_nim"
+                    ),
+                    complex_model=(self.ai_complex_model.value or "").strip(),
+                    fallback_provider=str(
+                        self.ai_fallback_provider.value or "openrouter"
+                    ),
+                    fallback_model=(self.ai_fallback_model.value or "").strip(),
+                    json_prefill_enabled=bool(self.ai_json_prefill.value),
+                    prompt_cache_enabled=bool(self.ai_prompt_cache.value),
                 )
                 await manager.apply_settings(settings)
                 save_ai_settings(AI_SETTINGS_FILE, settings)
@@ -1130,6 +1147,26 @@ class SenaFletUI:
             except Exception as error:
                 self.ai_status.value = f"Apply gagal · {type(error).__name__}: {error}"
                 self.ai_status.color = ERROR
+        if self.page:
+            self.page.update()
+
+    async def _reset_routing_defaults(self, e: Any) -> None:
+        del e
+        self.ai_routing_enabled.value = True
+        self.ai_fast_provider.value = "primary"
+        self.ai_fast_model.value = ""
+        self.ai_standard_provider.value = "primary"
+        self.ai_standard_model.value = ""
+        self.ai_complex_provider.value = "nvidia_nim"
+        self.ai_complex_model.value = "moonshotai/kimi-k3"
+        self.ai_fallback_provider.value = "openrouter"
+        self.ai_fallback_model.value = "openai/gpt-4o-mini"
+        self.ai_json_prefill.value = True
+        self.ai_prompt_cache.value = True
+        self.ai_status.value = (
+            "Default routing dimuat. Tekan Apply AI settings untuk menyimpan."
+        )
+        self.ai_status.color = WARNING
         if self.page:
             self.page.update()
 
@@ -1179,9 +1216,9 @@ class SenaFletUI:
         settings = manager.settings if manager else None
         self.ai_provider = ft.Dropdown(
             label="Provider",
-            value=settings.provider_name if settings else "nvidia_nim",
+            value=settings.provider_name if settings else "openrouter",
             options=self._options(
-                [("nvidia_nim", "NVIDIA NIM"), ("openrouter", "OpenRouter")]
+                [("openrouter", "OpenRouter"), ("nvidia_nim", "NVIDIA NIM")]
             ),
         )
         self.ai_nvidia = ft.TextField(
@@ -1227,6 +1264,67 @@ class SenaFletUI:
         self.ai_history = ft.TextField(
             label="History max messages",
             value=str(settings.history_max_messages if settings else 20),
+            border_color=BORDER,
+        )
+        route_provider_items = [
+            ("primary", "Ikuti Primary"),
+            ("nvidia_nim", "NVIDIA NIM"),
+            ("openrouter", "OpenRouter"),
+        ]
+        self.ai_routing_enabled = ft.Switch(
+            label="Enable tiered routing",
+            value=settings.routing_enabled if settings else True,
+        )
+        self.ai_json_prefill = ft.Switch(
+            label="JSON assistant prefill",
+            value=settings.json_prefill_enabled if settings else True,
+        )
+        self.ai_prompt_cache = ft.Switch(
+            label="Prompt cache",
+            value=settings.prompt_cache_enabled if settings else True,
+        )
+        self.ai_fast_provider = ft.Dropdown(
+            label="FAST provider",
+            value=settings.fast_provider if settings else "primary",
+            options=self._options(route_provider_items),
+        )
+        self.ai_fast_model = ft.TextField(
+            label="FAST model (kosong = model provider/primary)",
+            value=settings.fast_model if settings else "",
+            border_color=BORDER,
+        )
+        self.ai_standard_provider = ft.Dropdown(
+            label="STANDARD provider",
+            value=settings.standard_provider if settings else "primary",
+            options=self._options(route_provider_items),
+        )
+        self.ai_standard_model = ft.TextField(
+            label="STANDARD model (kosong = model provider/primary)",
+            value=settings.standard_model if settings else "",
+            border_color=BORDER,
+        )
+        self.ai_complex_provider = ft.Dropdown(
+            label="COMPLEX provider",
+            value=settings.complex_provider if settings else "nvidia_nim",
+            options=self._options(route_provider_items),
+        )
+        self.ai_complex_model = ft.TextField(
+            label="COMPLEX model",
+            value=settings.complex_model if settings else "moonshotai/kimi-k3",
+            border_color=BORDER,
+        )
+        self.ai_fallback_provider = ft.Dropdown(
+            label="Fallback provider",
+            value=settings.fallback_provider if settings else "openrouter",
+            options=self._options(route_provider_items),
+        )
+        self.ai_fallback_model = ft.TextField(
+            label="Fallback model",
+            value=(
+                settings.fallback_model
+                if settings
+                else "openai/gpt-4o-mini"
+            ),
             border_color=BORDER,
         )
 
@@ -1294,6 +1392,91 @@ class SenaFletUI:
                             ),
                             ft.Button("Apply AI settings", icon=ft.Icons.SAVE_OUTLINED, on_click=self._apply_ai_settings),
                             self.ai_status,
+                        ],
+                        spacing=12,
+                    )
+                ),
+                self._panel(
+                    ft.Column(
+                        controls=[
+                            ft.Text(
+                                "Model Routing",
+                                color=TEXT,
+                                weight=ft.FontWeight.W_600,
+                            ),
+                            ft.Text(
+                                "FAST untuk respons ringan, STANDARD untuk chat normal, "
+                                "COMPLEX untuk coding/analisis. FAST/ STANDARD memakai "
+                                "fallback ringan agar tidak nyasar ke NVIDIA/Kimi yang lambat.",
+                                color=MUTED,
+                                size=11,
+                            ),
+                            ft.Row(
+                                wrap=True,
+                                controls=[
+                                    self.ai_routing_enabled,
+                                    self.ai_json_prefill,
+                                    self.ai_prompt_cache,
+                                ],
+                            ),
+                            ft.ResponsiveRow(
+                                controls=[
+                                    ft.Container(
+                                        col={"xs": 12, "md": 4},
+                                        content=self.ai_fast_provider,
+                                    ),
+                                    ft.Container(
+                                        col={"xs": 12, "md": 8},
+                                        content=self.ai_fast_model,
+                                    ),
+                                    ft.Container(
+                                        col={"xs": 12, "md": 4},
+                                        content=self.ai_standard_provider,
+                                    ),
+                                    ft.Container(
+                                        col={"xs": 12, "md": 8},
+                                        content=self.ai_standard_model,
+                                    ),
+                                    ft.Container(
+                                        col={"xs": 12, "md": 4},
+                                        content=self.ai_complex_provider,
+                                    ),
+                                    ft.Container(
+                                        col={"xs": 12, "md": 8},
+                                        content=self.ai_complex_model,
+                                    ),
+                                    ft.Container(
+                                        col={"xs": 12, "md": 4},
+                                        content=self.ai_fallback_provider,
+                                    ),
+                                    ft.Container(
+                                        col={"xs": 12, "md": 8},
+                                        content=self.ai_fallback_model,
+                                    ),
+                                ],
+                                spacing=10,
+                                run_spacing=10,
+                            ),
+                            ft.Text(
+                                "Model kosong hanya diperbolehkan saat provider = Ikuti Primary.",
+                                color=MUTED,
+                                size=10,
+                            ),
+                            ft.Row(
+                                wrap=True,
+                                controls=[
+                                    ft.Button(
+                                        "Apply AI settings",
+                                        icon=ft.Icons.SAVE_OUTLINED,
+                                        on_click=self._apply_ai_settings,
+                                    ),
+                                    ft.Button(
+                                        "Reset routing defaults",
+                                        icon=ft.Icons.RESTORE,
+                                        on_click=self._reset_routing_defaults,
+                                    ),
+                                ],
+                            ),
                         ],
                         spacing=12,
                     )

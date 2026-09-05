@@ -1,9 +1,12 @@
 import unittest
+from unittest.mock import patch
 
 from assistant.llm.base import ChatMessage, LLMProvider, LLMProviderError
 from assistant.llm.manager import LLMManager
 from assistant.llm.providers.nvidia_nim import NvidiaNimProvider
 from assistant.llm.routing import ModelTarget, RoutingTier, choose_routing_tier
+from assistant.manager import build_llm_manager
+from assistant.settings import AISettings
 
 
 class FakeProvider(LLMProvider):
@@ -129,6 +132,35 @@ class LLMManagerRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fallback.models, ["openai/gpt-4o-mini"])
         await manager.close()
 
+    async def test_fast_route_does_not_fallback_to_slow_primary(self) -> None:
+        fast = FakeProvider(response='{"text":"fast"}')
+        slow_primary = FakeProvider(response='{"text":"slow"}')
+        manager = LLMManager(
+            slow_primary,
+            "nvidia_nim",
+            "moonshotai/kimi-k3",
+            providers={"openrouter": fast, "nvidia_nim": slow_primary},
+            routes={RoutingTier.FAST: ModelTarget("openrouter", "fast-model")},
+            fallback_targets=(ModelTarget("nvidia_nim", "moonshotai/kimi-k3"),),
+            tier_fallback_targets={
+                RoutingTier.FAST: (ModelTarget("openrouter", "openai/gpt-4o-mini"),)
+            },
+        )
+        response = await manager.chat(
+            [ChatMessage("user", "halo")],
+            tier=RoutingTier.FAST,
+        )
+        self.assertEqual(response, '{"text":"fast"}')
+        self.assertEqual(slow_primary.models, [])
+        self.assertEqual(
+            manager._candidates(RoutingTier.FAST),
+            (
+                ModelTarget("openrouter", "fast-model"),
+                ModelTarget("openrouter", "openai/gpt-4o-mini"),
+            ),
+        )
+        await manager.close()
+
     async def test_openrouter_receives_prefill_and_cache_key(self) -> None:
         provider = AdvancedProvider()
         manager = LLMManager(provider, "openrouter", "model")
@@ -160,6 +192,96 @@ class NvidiaKimiConfigurationTests(unittest.TestCase):
         self.assertEqual(body["max_tokens"], 4096)
         self.assertEqual(body["response_format"], {"type": "json_object"})
         self.assertNotIn("chat_template_kwargs", body)
+
+
+class PersistedRoutingConfigurationTests(unittest.TestCase):
+    def test_build_manager_uses_settings_instead_of_environment(self) -> None:
+        configured = AISettings(
+            provider_name="openrouter",
+            openrouter_model="primary-model",
+            nvidia_nim_model="nim-default",
+            nvidia_nim_base_url="https://example.com/v1",
+            max_tokens=300,
+            request_timeout_seconds=60.0,
+            retry_count=2,
+            retry_delay_seconds=1.0,
+            chat_timeout_seconds=120.0,
+            history_max_messages=20,
+            fast_provider="openrouter",
+            fast_model="fast-model",
+            standard_provider="primary",
+            standard_model="",
+            complex_provider="nvidia_nim",
+            complex_model="moonshotai/kimi-k3",
+            fallback_provider="openrouter",
+            fallback_model="fallback-model",
+            json_prefill_enabled=False,
+            prompt_cache_enabled=False,
+        )
+        providers = {
+            "openrouter": FakeProvider(),
+            "nvidia_nim": FakeProvider(),
+        }
+        with patch(
+            "assistant.manager.create_provider",
+            side_effect=lambda name, **kwargs: providers[name],
+        ):
+            manager = build_llm_manager(configured)
+
+        self.assertEqual(
+            manager._routes[RoutingTier.FAST],
+            ModelTarget("openrouter", "fast-model"),
+        )
+        self.assertEqual(
+            manager._routes[RoutingTier.STANDARD],
+            ModelTarget("openrouter", "primary-model"),
+        )
+        self.assertEqual(
+            manager._routes[RoutingTier.COMPLEX],
+            ModelTarget("nvidia_nim", "moonshotai/kimi-k3"),
+        )
+        self.assertFalse(manager._json_prefill_enabled)
+        self.assertFalse(manager._prompt_cache_enabled)
+
+    def test_build_manager_refuses_nvidia_for_fast_route(self) -> None:
+        configured = AISettings(
+            provider_name="nvidia_nim",
+            openrouter_model="openai/gpt-4o-mini",
+            nvidia_nim_model="deepseek-ai/deepseek-v4-flash-0731",
+            nvidia_nim_base_url="https://example.com/v1",
+            max_tokens=300,
+            request_timeout_seconds=60.0,
+            retry_count=2,
+            retry_delay_seconds=1.0,
+            chat_timeout_seconds=120.0,
+            history_max_messages=20,
+            fast_provider="nvidia_nim",
+            fast_model="deepseek-ai/deepseek-v4-flash-0731",
+            standard_provider="primary",
+            standard_model="",
+            complex_provider="nvidia_nim",
+            complex_model="moonshotai/kimi-k3",
+            fallback_provider="openrouter",
+            fallback_model="openai/gpt-4o-mini",
+        )
+        providers = {
+            "openrouter": FakeProvider(),
+            "nvidia_nim": FakeProvider(),
+        }
+        with patch(
+            "assistant.manager.create_provider",
+            side_effect=lambda name, **kwargs: providers[name],
+        ):
+            manager = build_llm_manager(configured)
+
+        self.assertEqual(
+            manager._routes[RoutingTier.FAST],
+            ModelTarget("openrouter", "openai/gpt-4o-mini"),
+        )
+        self.assertEqual(
+            manager._tier_fallback_targets[RoutingTier.FAST],
+            (ModelTarget("openrouter", "openai/gpt-4o-mini"),),
+        )
 
 
 if __name__ == "__main__":
