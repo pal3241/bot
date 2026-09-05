@@ -99,6 +99,48 @@ Ketik nomor menu untuk memilih fitur. Ketik `exit` untuk kembali atau menutup pr
 
 Menu **AI Settings** berada pada nomor 4. Pengaturan provider, model, token, timeout, retry, session, history, bahasa, dan NVIDIA NIM URL dapat diubah saat bot berjalan. Nilainya disimpan otomatis ke `data/ai_settings.json`; API key tetap hanya dibaca dari `.env` dan tidak pernah disimpan di file pengaturan.
 
+## Prompt prefill dan model routing
+
+Sena membagi request AI menjadi tiga tier secara deterministik:
+
+- `FAST`: sapaan, reaksi, dan pesan pendek tanpa konteks waktu.
+- `STANDARD`: percakapan normal atau history yang mulai panjang.
+- `COMPLEX`: coding, debugging, analisis, memory eksplisit, dan action planning.
+
+Jalur `COMPLEX` default menggunakan NVIDIA NIM model
+`moonshotai/kimi-k3`. FAST dan STANDARD mengikuti provider/model aktif.
+Jika target route gagal, router mencoba model fallback lalu model utama.
+
+Structured response menggunakan JSON mode. OpenRouter juga menerima assistant
+prefill `{` dan `session_id` per channel untuk sticky routing serta peluang
+prompt-cache hit yang lebih tinggi. Prompt system dibagi menjadi prefix stabil
+dan bagian dinamis supaya provider yang mendukung prefix/KV caching dapat
+menggunakan ulang prefix yang sama.
+
+Konfigurasi dapat ditambahkan ke `.env`:
+
+```env
+LLM_ROUTING_ENABLED=true
+LLM_JSON_PREFILL_ENABLED=true
+LLM_PROMPT_CACHE_ENABLED=true
+
+LLM_FAST_PROVIDER=
+LLM_FAST_MODEL=
+LLM_STANDARD_PROVIDER=
+LLM_STANDARD_MODEL=
+
+LLM_COMPLEX_PROVIDER=nvidia_nim
+LLM_COMPLEX_MODEL=moonshotai/kimi-k3
+
+LLM_FALLBACK_PROVIDER=openrouter
+LLM_FALLBACK_MODEL=openai/gpt-4o-mini
+```
+
+Provider fallback hanya diaktifkan jika API key provider tersebut tersedia.
+Log `[SENA ROUTER]` menunjukkan tier, model yang dipilih, dan perpindahan
+fallback. Log `[SENA CACHE]` menunjukkan token cache OpenRouter jika provider
+mengembalikan metrik tersebut.
+
 ## Emoji Manager
 
 Atur lokasi GIF dalam `config.py`:
