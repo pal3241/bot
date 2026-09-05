@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -15,7 +17,7 @@ from core.feature_loader import FeatureLoadResult, feature_health_summary, load_
 from core.io import ainput
 from core.registry import FEATURES
 from core.runtime_log import install_runtime_log_capture, restore_runtime_log_capture
-from core.runtime_status import RuntimeStatus
+from core.runtime_status import HealthState, RuntimeStatus
 
 MessageDisplay = Callable[[discord.Message, AppContext], Awaitable[None]]
 
@@ -197,6 +199,10 @@ def _build_runtime_status(
     message_router: Any | None,
     expression_service: Any | None,
     action_executor: Any | None,
+    scheduler: Any | None,
+    music: Any | None,
+    device: DeviceInfo,
+    feature_results: dict[str, FeatureLoadResult],
 ) -> RuntimeStatus:
     tools: tuple[str, ...] = ()
     if action_executor is not None:
@@ -204,13 +210,115 @@ def _build_runtime_status(
             tools = tuple(action_executor.registry.names)
         except Exception:
             tools = ()
-    return RuntimeStatus(
+    status = RuntimeStatus(
         ai_enabled=assistant is not None,
         router_enabled=message_router is not None,
         action_enabled=action_executor is not None,
         expression_enabled=expression_service is not None,
         action_tools=tools,
     )
+    status.update(
+        "discord", "Discord", HealthState.STARTING, detail="gateway connecting"
+    )
+    status.update(
+        "ai",
+        "AI",
+        HealthState.READY if assistant is not None else HealthState.UNAVAILABLE,
+        detail="assistant initialized" if assistant is not None else "assistant unavailable",
+    )
+    health_reader = getattr(assistant, "llm_health", None)
+    provider_health = health_reader() if callable(health_reader) else {}
+    for key, label in (("openrouter", "OpenRouter"), ("nvidia_nim", "NVIDIA NIM")):
+        configured = key in provider_health
+        status.update(
+            key,
+            label,
+            HealthState.READY if configured else HealthState.UNAVAILABLE,
+            detail=(
+                "configured; waiting for first request"
+                if configured
+                else "not configured or API key missing"
+            ),
+        )
+    status.update(
+        "memory",
+        "Memory",
+        HealthState.READY if assistant is not None else HealthState.UNAVAILABLE,
+        detail="SQLite initialized" if assistant is not None else "assistant unavailable",
+    )
+    status.update(
+        "actions",
+        "Actions",
+        HealthState.READY if action_executor is not None else HealthState.UNAVAILABLE,
+        detail=f"{len(tools)} tools registered" if tools else "no action executor",
+    )
+    status.update(
+        "router",
+        "Discord Router",
+        HealthState.READY if message_router is not None else HealthState.UNAVAILABLE,
+        detail="message routing active" if message_router is not None else "router unavailable",
+    )
+    status.update(
+        "expression",
+        "Expression",
+        HealthState.READY if expression_service is not None else HealthState.UNAVAILABLE,
+        detail="catalog loaded" if expression_service is not None else "service unavailable",
+    )
+    status.update(
+        "scheduler",
+        "Scheduler",
+        HealthState.STARTING if scheduler is not None else HealthState.UNAVAILABLE,
+        detail="waiting for Discord" if scheduler is not None else "manager unavailable",
+    )
+    music_state = getattr(getattr(music, "readiness", None), "value", "UNAVAILABLE")
+    status.update(
+        "music",
+        "Music",
+        HealthState(music_state),
+        detail=music.backend_status() if music is not None else "manager unavailable",
+    )
+    tts_ready = importlib.util.find_spec("gtts") is not None
+    status.update(
+        "tts",
+        "TTS / gTTS",
+        HealthState.READY if tts_ready else HealthState.UNAVAILABLE,
+        detail="standalone synthesis available" if tts_ready else "gTTS missing",
+    )
+    voice_missing: list[str] = []
+    if importlib.util.find_spec("nacl") is None:
+        voice_missing.append("PyNaCl")
+    if shutil.which("ffmpeg") is None:
+        voice_missing.append("FFmpeg")
+    status.update(
+        "voice_tx",
+        "Voice TX",
+        HealthState.DEGRADED if voice_missing else HealthState.READY,
+        detail=(
+            "missing " + ", ".join(voice_missing)
+            if voice_missing
+            else "transport dependencies ready"
+        ),
+    )
+    voice_feature = feature_results.get("voice")
+    machine = device.machine.casefold()
+    arm_runtime = device.is_android or machine.startswith(("arm", "aarch"))
+    stt_ready = not arm_runtime and bool(
+        voice_feature and voice_feature.available
+    )
+    status.update(
+        "stt_rx",
+        "STT RX",
+        HealthState.READY if stt_ready else HealthState.UNAVAILABLE,
+        detail=(
+            "desktop receiver available"
+            if stt_ready
+            else "unsupported on Android/ARM"
+            if arm_runtime
+            else "voice feature unavailable"
+        ),
+    )
+    status.update("flet", "Flet Web", HealthState.STARTING, detail="UI not mounted")
+    return status
 
 
 def _build_flet_ui_safely(
@@ -272,6 +380,10 @@ async def run(token: str) -> None:
         message_router,
         expression_service,
         action_executor,
+        scheduler,
+        music,
+        device,
+        feature_results,
     )
     flet_ui: Any | None = None
     restart_requested = False
@@ -300,9 +412,16 @@ async def run(token: str) -> None:
         if message_router is not None:
             try:
                 await message_router.handle(message)
+                runtime_status.update(
+                    "router",
+                    "Discord Router",
+                    HealthState.READY,
+                    detail="last message handled",
+                )
             except asyncio.CancelledError:
                 raise
             except Exception as error:
+                runtime_status.fail("router", "Discord Router", error)
                 print(
                     f"[SUBSYSTEM RUNTIME] Discord AI Router gagal: "
                     f"{type(error).__name__}: {error}"
@@ -317,11 +436,21 @@ async def run(token: str) -> None:
             raise RuntimeError(
                 "Discord client siap tetapi identitas bot tidak tersedia."
             )
+        runtime_status.update(
+            "discord", "Discord", HealthState.READY, detail="gateway connected"
+        )
 
         if music is not None:
             try:
                 await music.start()
+                runtime_status.update(
+                    "music",
+                    "Music",
+                    HealthState(music.readiness.value),
+                    detail=music.backend_status(),
+                )
             except Exception as error:
+                runtime_status.fail("music", "Music", error)
                 print(
                     f"[SUBSYSTEM] Music start gagal: "
                     f"{type(error).__name__}: {error}; bot tetap berjalan"
@@ -330,7 +459,14 @@ async def run(token: str) -> None:
         if scheduler is not None:
             try:
                 await scheduler.start()
+                runtime_status.update(
+                    "scheduler",
+                    "Scheduler",
+                    HealthState.READY,
+                    detail="job loop running",
+                )
             except Exception as error:
+                runtime_status.fail("scheduler", "Scheduler", error)
                 print(
                     f"[SUBSYSTEM] Scheduler start gagal: "
                     f"{type(error).__name__}: {error}; bot tetap berjalan"
@@ -339,7 +475,14 @@ async def run(token: str) -> None:
         if expression_service is not None:
             try:
                 expression_service.refresh_runtime()
+                runtime_status.update(
+                    "expression",
+                    "Expression",
+                    HealthState.READY,
+                    detail="runtime refreshed",
+                )
             except Exception as error:
+                runtime_status.fail("expression", "Expression", error)
                 print(
                     f"[SUBSYSTEM] Expression runtime refresh gagal: "
                     f"{type(error).__name__}: {error}; text bot tetap berjalan"
