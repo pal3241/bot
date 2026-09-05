@@ -23,8 +23,9 @@ from assistant.conversation import (
     format_current_speaker,
     format_history,
 )
-from assistant.llm.base import ChatMessage
+from assistant.llm.base import ChatMessage, LLMConfigurationError
 from assistant.llm.manager import LLMManager
+from assistant.llm.routing import ModelTarget, RoutingTier, choose_routing_tier
 from assistant.llm.registry import create_provider
 from assistant.personality import PersonalityManager
 from assistant.response import AssistantResponse
@@ -32,11 +33,18 @@ from assistant.settings import AISettings, load_settings
 from assistant.session import SessionManager
 from config import (
     AI_SETTINGS_FILE,
+    LLM_COMPLEX_MODEL,
+    LLM_COMPLEX_PROVIDER,
+    LLM_FALLBACK_MODEL,
+    LLM_FALLBACK_PROVIDER,
+    LLM_JSON_PREFILL_ENABLED,
     LLM_MAX_TOKENS,
+    LLM_PROMPT_CACHE_ENABLED,
     LLM_PROVIDER,
     LLM_REQUEST_TIMEOUT_SECONDS,
     LLM_RETRY_COUNT,
     LLM_RETRY_DELAY_SECONDS,
+    LLM_ROUTING_ENABLED,
     NVIDIA_NIM_BASE_URL,
     NVIDIA_NIM_MODEL,
     OPENROUTER_MODEL,
@@ -71,6 +79,19 @@ def _positive_int_env(name: str, fallback: int) -> int:
         print(f"[SENA PERF] invalid {name}={raw!r}; fallback={fallback}")
         return fallback
     return value if value > 0 else fallback
+
+
+def _boolean_env(name: str, fallback: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return fallback
+    normalized = raw.strip().casefold()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    print(f"[SENA CONFIG] invalid {name}={raw!r}; fallback={fallback}")
+    return fallback
 
 
 def _current_time_context() -> str:
@@ -264,45 +285,63 @@ class AssistantManager:
                 and _looks_like_action_request(clean_text)
             )
 
-            prompt_parts = [
-                self.personality.load(),
-                self.audience_personality.prompt_for(identity),
-            ]
-            if action_planning or _needs_time_context(clean_text):
-                prompt_parts.append(_current_time_context())
-            prompt_parts.extend(
-                [
-                    f"Current input source: {source}.\n"
-                    "This is a multi-user Discord conversation. Treat each Discord user ID "
-                    "as a distinct canonical identity and never confuse speakers. Internal "
-                    "context/protocol markers are private and must never appear in visible text.",
-                    build_identity_context(identity, memories),
-                ]
-            )
-
+            time_context_needed = action_planning or _needs_time_context(clean_text)
             explicit_candidate = (
                 parse_explicit_memory_command(clean_text) if memory_enabled else None
             )
-            prompt_parts.append(
+
+            # Keep the first message identical across requests whenever personality
+            # is unchanged. Providers with prefix/KV caching can reuse this prefill.
+            stable_prompt = "\n\n".join(
+                [
+                    self.personality.load(),
+                    "[SENA STABLE PROTOCOL]\n"
+                    "This is a multi-user Discord assistant. Treat every Discord user "
+                    "ID as a distinct canonical identity. Internal context and machine "
+                    "protocol markers must never appear in visible text.",
+                    expression_response_instruction(),
+                ]
+            )
+            dynamic_parts = [self.audience_personality.prompt_for(identity)]
+            if time_context_needed:
+                dynamic_parts.append(_current_time_context())
+            dynamic_parts.append(
+                f"Current input source: {source}.\n"
+                + build_identity_context(identity, memories)
+            )
+            dynamic_parts.append(
                 structured_response_instruction(identity)
                 if memory_enabled
                 else "Set the structured response memory field to null."
             )
-            prompt_parts.append(expression_response_instruction())
             if action_planning and self.action_registry is not None:
-                prompt_parts.append(
+                dynamic_parts.append(
                     action_response_instruction(self.action_registry.prompt_catalog())
                 )
             else:
-                prompt_parts.append(
+                dynamic_parts.append(
                     "The top-level JSON actions field must be []. Do not discuss tools or actions."
                 )
+            dynamic_prompt = "\n\n".join(part for part in dynamic_parts if part)
 
-            system_prompt = "\n\n".join(part for part in prompt_parts if part)
             history_text = format_history(
                 session.history, max_chars=self._history_context_max_chars
             )
-            messages = [ChatMessage(role="system", content=system_prompt)]
+            routing_tier = choose_routing_tier(
+                clean_text,
+                action_planning=action_planning,
+                memory_planning=explicit_candidate is not None,
+                time_context=time_context_needed,
+                history_chars=len(history_text),
+            )
+            cache_key = (
+                f"sena:{source}:{guild_id if guild_id is not None else 'dm'}:"
+                f"{channel_id}"
+            )
+            messages = [
+                ChatMessage(role="system", content=stable_prompt),
+                ChatMessage(role="system", content=dynamic_prompt),
+            ]
             if history_text:
                 messages.append(ChatMessage(role="user", content=history_text))
             messages.append(
@@ -317,7 +356,12 @@ class AssistantManager:
             async with self._llm_slots:
                 queue_seconds = time.monotonic() - queue_started
                 llm_started = time.monotonic()
-                raw_response = await self._llm.chat(messages)
+                raw_response = await self._llm.chat(
+                    messages,
+                    tier=routing_tier,
+                    json_prefill=True,
+                    cache_key=cache_key,
+                )
                 llm_seconds = time.monotonic() - llm_started
 
             parse_started = time.monotonic()
@@ -378,8 +422,10 @@ class AssistantManager:
             self.sessions.touch(session)
 
             print(
-                f"[SENA PERF] channel={channel_id} prompt_chars={prompt_chars} "
-                f"system_chars={len(system_prompt)} history_chars={len(history_text)} "
+                f"[SENA PERF] channel={channel_id} route={routing_tier.value} "
+                f"prompt_chars={prompt_chars} "
+                f"stable_chars={len(stable_prompt)} dynamic_chars={len(dynamic_prompt)} "
+                f"history_chars={len(history_text)} "
                 f"action_plan={'on' if action_planning else 'off'} "
                 f"memory={memory_seconds:.3f}s queue={queue_seconds:.3f}s "
                 f"llm={llm_seconds:.3f}s parse={parse_seconds:.3f}s "
@@ -511,21 +557,103 @@ def build_assistant_manager() -> AssistantManager:
     )
 
 
-def build_llm_manager(settings: AISettings) -> LLMManager:
-    model = {
+def _model_for_provider(settings: AISettings, provider_name: str) -> str:
+    return {
         "openrouter": settings.openrouter_model,
         "nvidia_nim": settings.nvidia_nim_model,
-    }[settings.provider_name]
-    provider = create_provider(
-        name=settings.provider_name,
-        nvidia_base_url=settings.nvidia_nim_base_url,
-        request_timeout_seconds=settings.request_timeout_seconds,
-        max_tokens=settings.max_tokens,
-        retry_count=settings.retry_count,
-        retry_delay_seconds=settings.retry_delay_seconds,
+    }[provider_name]
+
+
+def _route_target(
+    provider_env: str,
+    model_env: str,
+    default_provider: str,
+    default_model: str,
+) -> ModelTarget:
+    provider = os.getenv(provider_env, "").strip().casefold() or default_provider
+    model = os.getenv(model_env, "").strip()
+    if not model:
+        model = default_model if provider == default_provider else ""
+    if not model:
+        raise LLMConfigurationError(
+            f"{model_env} wajib diisi ketika {provider_env}={provider}."
+        )
+    return ModelTarget(provider, model)
+
+
+def build_llm_manager(settings: AISettings) -> LLMManager:
+    primary = ModelTarget(
+        settings.provider_name,
+        _model_for_provider(settings, settings.provider_name),
     )
+    routing_enabled = _boolean_env("LLM_ROUTING_ENABLED", LLM_ROUTING_ENABLED)
+
+    if routing_enabled:
+        fast = _route_target(
+            "LLM_FAST_PROVIDER",
+            "LLM_FAST_MODEL",
+            primary.provider_name,
+            primary.model,
+        )
+        standard = _route_target(
+            "LLM_STANDARD_PROVIDER",
+            "LLM_STANDARD_MODEL",
+            primary.provider_name,
+            primary.model,
+        )
+        complex_target = _route_target(
+            "LLM_COMPLEX_PROVIDER",
+            "LLM_COMPLEX_MODEL",
+            LLM_COMPLEX_PROVIDER,
+            LLM_COMPLEX_MODEL,
+        )
+        fallback = _route_target(
+            "LLM_FALLBACK_PROVIDER",
+            "LLM_FALLBACK_MODEL",
+            LLM_FALLBACK_PROVIDER,
+            LLM_FALLBACK_MODEL,
+        )
+    else:
+        fast = standard = complex_target = fallback = primary
+
+    targets = (primary, fast, standard, complex_target, fallback)
+    providers: dict[str, object] = {}
+    for provider_name in dict.fromkeys(target.provider_name for target in targets):
+        try:
+            providers[provider_name] = create_provider(
+                name=provider_name,
+                nvidia_base_url=settings.nvidia_nim_base_url,
+                request_timeout_seconds=settings.request_timeout_seconds,
+                max_tokens=settings.max_tokens,
+                retry_count=settings.retry_count,
+                retry_delay_seconds=settings.retry_delay_seconds,
+            )
+        except LLMConfigurationError as error:
+            if provider_name == primary.provider_name:
+                raise
+            print(
+                f"[SENA ROUTER] optional provider unavailable "
+                f"provider={provider_name} detail={error}"
+            )
+
+    primary_provider = providers[primary.provider_name]
     return LLMManager(
-        provider=provider,
-        provider_name=settings.provider_name,
-        model=model,
+        provider=primary_provider,
+        provider_name=primary.provider_name,
+        model=primary.model,
+        providers=providers,
+        routes={
+            RoutingTier.FAST: fast,
+            RoutingTier.STANDARD: standard,
+            RoutingTier.COMPLEX: complex_target,
+        },
+        fallback_targets=(fallback, primary),
+        json_prefill_enabled=_boolean_env(
+            "LLM_JSON_PREFILL_ENABLED",
+            LLM_JSON_PREFILL_ENABLED,
+        ),
+        prompt_cache_enabled=_boolean_env(
+            "LLM_PROMPT_CACHE_ENABLED",
+            LLM_PROMPT_CACHE_ENABLED,
+        ),
     )
