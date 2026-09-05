@@ -121,12 +121,13 @@ panjang, personality, jadwal, dan konfigurasi tidak ikut dihapus.
 
 Sena membagi request AI menjadi tiga tier secara deterministik:
 
-- `FAST`: sapaan, reaksi, dan pesan pendek tanpa konteks waktu.
-- `STANDARD`: percakapan normal atau history yang mulai panjang.
-- `COMPLEX`: coding, debugging, analisis, memory eksplisit, dan action planning.
+- `FAST`: sapaan, reaksi, dan pesan singkat sederhana.
+- `STANDARD`: pertanyaan normal seperti `kenapa python populer?` atau history yang mulai panjang.
+- `COMPLEX`: traceback nyata, code block, refactor/arsitektur yang berat, memory eksplisit, dan action planning.
 
 Jalur `COMPLEX` default menggunakan NVIDIA NIM model
-`moonshotai/kimi-k3`. FAST dan STANDARD mengikuti provider/model aktif.
+`moonshotai/kimi-k3`. FAST dan STANDARD default memakai OpenRouter; konfigurasi
+lama yang mengarahkannya ke NVIDIA dikoreksi ke OpenRouter saat runtime.
 Jika target route gagal, router mencoba model fallback lalu model utama.
 
 Structured response menggunakan JSON mode. OpenRouter juga menerima assistant
@@ -141,11 +142,13 @@ Konfigurasi dapat ditambahkan ke `.env`:
 LLM_ROUTING_ENABLED=true
 LLM_JSON_PREFILL_ENABLED=true
 LLM_PROMPT_CACHE_ENABLED=true
+LLM_FAST_TIMEOUT_SECONDS=10
+LLM_STANDARD_TIMEOUT_SECONDS=20
 
-LLM_FAST_PROVIDER=
-LLM_FAST_MODEL=
-LLM_STANDARD_PROVIDER=
-LLM_STANDARD_MODEL=
+LLM_FAST_PROVIDER=openrouter
+LLM_FAST_MODEL=openai/gpt-4o-mini
+LLM_STANDARD_PROVIDER=openrouter
+LLM_STANDARD_MODEL=openai/gpt-4o-mini
 
 LLM_COMPLEX_PROVIDER=nvidia_nim
 LLM_COMPLEX_MODEL=moonshotai/kimi-k3

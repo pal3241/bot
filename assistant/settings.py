@@ -16,10 +16,10 @@ class AISettings:
     chat_timeout_seconds: float
     history_max_messages: int
     routing_enabled: bool = True
-    fast_provider: str = "primary"
-    fast_model: str = ""
-    standard_provider: str = "primary"
-    standard_model: str = ""
+    fast_provider: str = "openrouter"
+    fast_model: str = "openai/gpt-4o-mini"
+    standard_provider: str = "openrouter"
+    standard_model: str = "openai/gpt-4o-mini"
     complex_provider: str = "nvidia_nim"
     complex_model: str = "moonshotai/kimi-k3"
     fallback_provider: str = "openrouter"

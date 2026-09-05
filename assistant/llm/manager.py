@@ -22,6 +22,7 @@ class LLMManager:
         routes: dict[RoutingTier, ModelTarget] | None = None,
         fallback_targets: tuple[ModelTarget, ...] = (),
         tier_fallback_targets: dict[RoutingTier, tuple[ModelTarget, ...]] | None = None,
+        tier_timeout_seconds: dict[RoutingTier, float] | None = None,
         json_prefill_enabled: bool = True,
         prompt_cache_enabled: bool = True,
     ) -> None:
@@ -38,6 +39,7 @@ class LLMManager:
         }
         self._fallback_targets = fallback_targets
         self._tier_fallback_targets = dict(tier_fallback_targets or {})
+        self._tier_timeout_seconds = dict(tier_timeout_seconds or {})
         self._json_prefill_enabled = json_prefill_enabled
         self._prompt_cache_enabled = prompt_cache_enabled
         self._provider_name = primary.provider_name
@@ -107,18 +109,42 @@ class LLMManager:
             raise LLMProviderError(f"Tidak ada model tersedia untuk route {tier.value}.")
 
         failures: list[str] = []
+        route_started = asyncio.get_running_loop().time()
+        route_timeout = self._tier_timeout_seconds.get(tier)
         for index, target in enumerate(candidates):
             try:
                 print(
                     f"[SENA ROUTER] tier={tier.value} attempt={index + 1} "
                     f"target={self._target_label(target)}"
                 )
-                return await self._chat_target(
-                    target,
-                    messages,
-                    json_prefill=json_prefill,
-                    cache_key=cache_key,
+                if route_timeout is None:
+                    return await self._chat_target(
+                        target,
+                        messages,
+                        json_prefill=json_prefill,
+                        cache_key=cache_key,
+                    )
+                remaining = route_timeout - (
+                    asyncio.get_running_loop().time() - route_started
                 )
+                if remaining <= 0:
+                    break
+                async with asyncio.timeout(remaining):
+                    return await self._chat_target(
+                        target,
+                        messages,
+                        json_prefill=json_prefill,
+                        cache_key=cache_key,
+                    )
+            except TimeoutError:
+                failures.append(
+                    f"{self._target_label(target)}=deadline {route_timeout:g}s"
+                )
+                print(
+                    f"[SENA ROUTER] deadline tier={tier.value} "
+                    f"limit={route_timeout:g}s target={self._target_label(target)}"
+                )
+                break
             except LLMProviderError as error:
                 failures.append(f"{self._target_label(target)}={error}")
                 if index + 1 < len(candidates):
@@ -127,9 +153,8 @@ class LLMManager:
                         f"to={self._target_label(candidates[index + 1])}"
                     )
 
-        raise LLMProviderError(
-            f"Semua model route {tier.value} gagal: " + " | ".join(failures)
-        )
+        detail = " | ".join(failures) or "route deadline habis"
+        raise LLMProviderError(f"Semua model route {tier.value} gagal: {detail}")
 
     async def close(self) -> None:
         unique = {id(provider): provider for provider in self._providers.values()}

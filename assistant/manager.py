@@ -25,7 +25,7 @@ from assistant.conversation import (
 )
 from assistant.llm.base import ChatMessage, LLMConfigurationError
 from assistant.llm.manager import LLMManager
-from assistant.llm.routing import ModelTarget, RoutingTier, choose_routing_tier
+from assistant.llm.routing import ModelTarget, RoutingTier, classify_routing_tier
 from assistant.llm.registry import create_provider
 from assistant.personality import PersonalityManager
 from assistant.response import AssistantResponse
@@ -37,6 +37,7 @@ from config import (
     LLM_COMPLEX_PROVIDER,
     LLM_FALLBACK_MODEL,
     LLM_FALLBACK_PROVIDER,
+    LLM_FAST_TIMEOUT_SECONDS,
     LLM_JSON_PREFILL_ENABLED,
     LLM_MAX_TOKENS,
     LLM_PROMPT_CACHE_ENABLED,
@@ -45,6 +46,7 @@ from config import (
     LLM_RETRY_COUNT,
     LLM_RETRY_DELAY_SECONDS,
     LLM_ROUTING_ENABLED,
+    LLM_STANDARD_TIMEOUT_SECONDS,
     NVIDIA_NIM_BASE_URL,
     NVIDIA_NIM_MODEL,
     OPENROUTER_MODEL,
@@ -75,6 +77,18 @@ def _positive_int_env(name: str, fallback: int) -> int:
         return fallback
     try:
         value = int(raw)
+    except ValueError:
+        print(f"[SENA PERF] invalid {name}={raw!r}; fallback={fallback}")
+        return fallback
+    return value if value > 0 else fallback
+
+
+def _positive_float_env(name: str, fallback: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return fallback
+    try:
+        value = float(raw)
     except ValueError:
         print(f"[SENA PERF] invalid {name}={raw!r}; fallback={fallback}")
         return fallback
@@ -329,12 +343,18 @@ class AssistantManager:
             history_text = format_history(
                 session.history, max_chars=self._history_context_max_chars
             )
-            routing_tier = choose_routing_tier(
+            routing_decision = classify_routing_tier(
                 clean_text,
                 action_planning=action_planning,
                 memory_planning=explicit_candidate is not None,
                 time_context=time_context_needed,
                 history_chars=len(history_text),
+            )
+            routing_tier = routing_decision.tier
+            print(
+                f"[SENA ROUTER] classified tier={routing_tier.value} "
+                f"score={routing_decision.score} "
+                f"reasons={','.join(routing_decision.reasons)}"
             )
             cache_key = (
                 f"sena:{source}:{guild_id if guild_id is not None else 'dm'}:"
@@ -527,13 +547,15 @@ def build_assistant_manager() -> AssistantManager:
                 "LLM_ROUTING_ENABLED", LLM_ROUTING_ENABLED
             ),
             fast_provider=os.getenv("LLM_FAST_PROVIDER", "").strip().casefold()
-            or "primary",
-            fast_model=os.getenv("LLM_FAST_MODEL", "").strip(),
+            or "openrouter",
+            fast_model=os.getenv("LLM_FAST_MODEL", "").strip()
+            or os.getenv("OPENROUTER_MODEL", OPENROUTER_MODEL).strip(),
             standard_provider=os.getenv(
                 "LLM_STANDARD_PROVIDER", ""
             ).strip().casefold()
-            or "primary",
-            standard_model=os.getenv("LLM_STANDARD_MODEL", "").strip(),
+            or "openrouter",
+            standard_model=os.getenv("LLM_STANDARD_MODEL", "").strip()
+            or os.getenv("OPENROUTER_MODEL", OPENROUTER_MODEL).strip(),
             complex_provider=os.getenv(
                 "LLM_COMPLEX_PROVIDER", LLM_COMPLEX_PROVIDER
             ).strip().casefold(),
@@ -610,11 +632,15 @@ def _route_target(
     return ModelTarget(provider, clean_model or _model_for_provider(settings, provider))
 
 
-def _fast_safe_target(settings: AISettings, target: ModelTarget) -> ModelTarget:
+def _latency_safe_target(
+    settings: AISettings,
+    target: ModelTarget,
+    tier: RoutingTier,
+) -> ModelTarget:
     if target.provider_name != "nvidia_nim":
         return target
     print(
-        "[SENA ROUTER] fast route refused slow provider=nvidia_nim; "
+        f"[SENA ROUTER] {tier.value} route refused slow provider=nvidia_nim; "
         "using openrouter instead"
     )
     return ModelTarget("openrouter", settings.openrouter_model)
@@ -637,7 +663,7 @@ def build_llm_manager(settings: AISettings) -> LLMManager:
     routing_enabled = settings.routing_enabled
 
     if routing_enabled:
-        fast = _fast_safe_target(
+        fast = _latency_safe_target(
             settings,
             _route_target(
                 settings,
@@ -645,12 +671,17 @@ def build_llm_manager(settings: AISettings) -> LLMManager:
                 settings.fast_model,
                 primary,
             ),
+            RoutingTier.FAST,
         )
-        standard = _route_target(
+        standard = _latency_safe_target(
             settings,
-            settings.standard_provider,
-            settings.standard_model,
-            primary,
+            _route_target(
+                settings,
+                settings.standard_provider,
+                settings.standard_model,
+                primary,
+            ),
+            RoutingTier.STANDARD,
         )
         complex_target = _route_target(
             settings,
@@ -704,6 +735,20 @@ def build_llm_manager(settings: AISettings) -> LLMManager:
             RoutingTier.FAST: (fast_fallback,),
             RoutingTier.STANDARD: (fast_fallback,),
             RoutingTier.COMPLEX: (fallback, primary),
+        },
+        tier_timeout_seconds={
+            RoutingTier.FAST: min(
+                settings.request_timeout_seconds,
+                _positive_float_env(
+                    "LLM_FAST_TIMEOUT_SECONDS", LLM_FAST_TIMEOUT_SECONDS
+                ),
+            ),
+            RoutingTier.STANDARD: min(
+                settings.request_timeout_seconds,
+                _positive_float_env(
+                    "LLM_STANDARD_TIMEOUT_SECONDS", LLM_STANDARD_TIMEOUT_SECONDS
+                ),
+            ),
         },
         json_prefill_enabled=settings.json_prefill_enabled,
         prompt_cache_enabled=settings.prompt_cache_enabled,

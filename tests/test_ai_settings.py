@@ -58,7 +58,8 @@ class AISettingsTests(unittest.TestCase):
             path.write_text(json.dumps(legacy), encoding="utf-8")
             loaded = load_settings(path, initial)
         self.assertTrue(loaded.routing_enabled)
-        self.assertEqual(loaded.fast_provider, "primary")
+        self.assertEqual(loaded.fast_provider, "openrouter")
+        self.assertEqual(loaded.standard_provider, "openrouter")
         self.assertEqual(loaded.complex_model, "moonshotai/kimi-k3")
 
     def test_explicit_provider_requires_model(self) -> None:
