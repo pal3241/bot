@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import importlib.util
 import os
 import re
+import shutil
 import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -32,7 +35,13 @@ from core.context import AppContext
 from core.device import DeviceInfo
 from core.feature_loader import FeatureLoadResult, FeatureLoadState, feature_health_summary
 from core.runtime_log import RUNTIME_LOGS
-from core.runtime_status import HealthState, RuntimeStatus, SubsystemHealth
+from core.runtime_status import (
+    HealthState,
+    RuntimeStatus,
+    SubsystemHealth,
+    dependency_state,
+    provider_state_from_health,
+)
 from stt.settings import load_configured_settings, save_settings as save_stt_settings
 from voice.converters.registry import CONVERTERS
 from voice.converters.settings import VoiceConverterSettings
@@ -76,6 +85,9 @@ class SenaFletUI:
         self._shutdown_event = asyncio.Event()
         self._restart_requested = False
         self.settings_status = ft.Text("", color=MUTED, size=11)
+        self.health_summary = ft.Text("", color=MUTED, size=11)
+        self.health_list = ft.Column(spacing=10)
+        self._health_controls: dict[str, dict[str, ft.Control]] = {}
 
         self.content = ft.Container(expand=True, bgcolor=BG)
         self.chat_view = ft.TextField(
@@ -337,6 +349,22 @@ class SenaFletUI:
         self.page.open(dialog)
 
     # ---------- dashboard ----------
+    def _voice_tx_dependency_health(self) -> tuple[HealthState, str]:
+        missing: list[str] = []
+        if importlib.util.find_spec("nacl") is None:
+            missing.append("PyNaCl")
+        if shutil.which("ffmpeg") is None:
+            missing.append("FFmpeg")
+        if not self.device.is_android and importlib.util.find_spec("davey") is None:
+            missing.append("davey")
+        if missing:
+            return dependency_state(missing, ready_detail="")
+        connected = len(self.ctx.client.voice_clients)
+        return (
+            HealthState.READY,
+            f"connected clients={connected}" if connected else "transport ready; VC idle",
+        )
+
     def _refresh_live_health(self) -> None:
         self.runtime_status.update(
             "discord",
@@ -351,6 +379,51 @@ class SenaFletUI:
             HealthState.READY if assistant is not None else HealthState.UNAVAILABLE,
             detail="assistant initialized" if assistant is not None else "assistant unavailable",
         )
+        memory = getattr(assistant, "memory", None)
+        memory_available = bool(getattr(memory, "available", False))
+        self.runtime_status.update(
+            "memory",
+            "Memory",
+            HealthState.READY
+            if memory_available
+            else HealthState.DEGRADED
+            if assistant is not None
+            else HealthState.UNAVAILABLE,
+            detail=(
+                "SQLite available"
+                if memory_available
+                else "memory manager offline"
+                if assistant is not None
+                else "assistant unavailable"
+            ),
+        )
+        action_executor = self.ctx.action_executor
+        try:
+            tool_names = tuple(action_executor.registry.names) if action_executor else ()
+            self.runtime_status.update(
+                "actions",
+                "Actions",
+                HealthState.READY if action_executor is not None else HealthState.UNAVAILABLE,
+                detail=f"{len(tool_names)} tools registered" if tool_names else "no action executor",
+            )
+        except Exception as error:
+            self.runtime_status.fail("actions", "Actions", error)
+        expression_service = self.ctx.expression_service
+        try:
+            if expression_service is not None:
+                expression_service.refresh_runtime()
+            self.runtime_status.update(
+                "expression",
+                "Expression",
+                HealthState.READY
+                if expression_service is not None
+                else HealthState.UNAVAILABLE,
+                detail="runtime emojis refreshed"
+                if expression_service is not None
+                else "service unavailable",
+            )
+        except Exception as error:
+            self.runtime_status.fail("expression", "Expression", error)
         health_reader = getattr(assistant, "llm_health", None)
         provider_health = health_reader() if callable(health_reader) else {}
         for key, label in (("openrouter", "OpenRouter"), ("nvidia_nim", "NVIDIA NIM")):
@@ -365,19 +438,20 @@ class SenaFletUI:
                 continue
             latency = health.get("latency_ms")
             last_error = health.get("last_error")
+            state, detail = provider_state_from_health(health)
+            last_success_at = health.get("last_success_at")
             self.runtime_status.update(
                 key,
                 label,
-                HealthState.DEGRADED if last_error else HealthState.READY,
-                detail=(
-                    "last request failed"
-                    if last_error
-                    else "last request succeeded"
-                    if isinstance(latency, (int, float))
-                    else "configured; waiting for first request"
-                ),
+                state,
+                detail=detail,
                 latency_ms=float(latency) if isinstance(latency, (int, float)) else None,
                 last_error=str(last_error) if last_error else None,
+                last_success_at=(
+                    float(last_success_at)
+                    if isinstance(last_success_at, (int, float))
+                    else None
+                ),
             )
         scheduler = self.ctx.scheduler
         self.runtime_status.update(
@@ -398,14 +472,37 @@ class SenaFletUI:
                 HealthState(music.readiness.value),
                 detail=music.backend_status(),
             )
-        voice_tx = self.runtime_status.get("voice_tx")
-        if voice_tx is not None and voice_tx.state is HealthState.READY:
-            connected = len(self.ctx.client.voice_clients)
+        voice_state, voice_detail = self._voice_tx_dependency_health()
+        self.runtime_status.update(
+            "voice_tx",
+            "Voice TX",
+            voice_state,
+            detail=voice_detail,
+        )
+        voice_feature = self.feature_results.get("voice")
+        machine = self.device.machine.casefold()
+        arm_runtime = self.device.is_android or machine.startswith(("arm", "aarch"))
+        stt_ready = not arm_runtime and bool(voice_feature and voice_feature.available)
+        self.runtime_status.update(
+            "stt_rx",
+            "STT RX",
+            HealthState.READY if stt_ready else HealthState.UNAVAILABLE,
+            detail=(
+                "desktop receiver available"
+                if stt_ready
+                else "unsupported on Android/ARM"
+                if arm_runtime
+                else "voice feature unavailable"
+            ),
+        )
+        tts = self.runtime_status.get("tts")
+        if tts is None or tts.last_success_at is None and tts.last_error is None:
+            tts_ready = importlib.util.find_spec("gtts") is not None
             self.runtime_status.update(
-                "voice_tx",
-                "Voice TX",
-                HealthState.READY,
-                detail=f"connected clients={connected}" if connected else "transport ready; VC idle",
+                "tts",
+                "TTS / gTTS",
+                HealthState.READY if tts_ready else HealthState.UNAVAILABLE,
+                detail="library installed; not yet tested" if tts_ready else "gTTS missing",
             )
         self.runtime_status.update(
             "flet", "Flet Web", HealthState.READY, detail="dashboard mounted"
@@ -417,34 +514,80 @@ class SenaFletUI:
             return SUCCESS
         if state is HealthState.STARTING:
             return WARNING
-        if state is HealthState.DEGRADED:
+        if state in {HealthState.DEGRADED, HealthState.STALE}:
             return WARNING
+        if state is HealthState.IDLE:
+            return MUTED
         return ERROR
 
     def _health_row(self, item: SubsystemHealth) -> ft.Control:
-        details = [item.detail] if item.detail else []
-        if item.latency_ms is not None:
-            details.append(f"{item.latency_ms:.0f}ms")
-        if item.last_error:
-            details.append(f"last_error={item.last_error}")
         color = self._health_color(item.state)
+        dot = ft.Container(width=8, height=8, border_radius=99, bgcolor=color)
+        label = ft.Text(item.label, color=TEXT, size=11, expand=True)
+        state = ft.Text(item.state.value, color=color, size=11)
+        detail = ft.Text(self._health_detail(item), color=MUTED, size=10)
+        self._health_controls[item.key] = {
+            "dot": dot,
+            "label": label,
+            "state": state,
+            "detail": detail,
+        }
         return ft.Column(
             controls=[
                 ft.Row(
                     controls=[
-                        ft.Container(width=8, height=8, border_radius=99, bgcolor=color),
-                        ft.Text(item.label, color=TEXT, size=11, expand=True),
-                        ft.Text(item.state.value, color=color, size=11),
+                        dot,
+                        label,
+                        state,
                     ],
                     spacing=8,
                 ),
                 ft.Container(
                     padding=ft.Padding.only(left=16),
-                    content=ft.Text(" · ".join(details), color=MUTED, size=10),
+                    content=detail,
                 ),
             ],
             spacing=3,
         )
+
+    @staticmethod
+    def _health_detail(item: SubsystemHealth) -> str:
+        details = [item.detail] if item.detail else []
+        if item.latency_ms is not None:
+            details.append(f"{item.latency_ms:.0f}ms")
+        if item.last_error:
+            details.append(f"last_error={item.last_error}")
+        return " · ".join(details)
+
+    def _render_health_panel(self) -> ft.Control:
+        self.health_summary.value = self.runtime_status.summary()
+        self.health_list.controls = [
+            self._health_row(item) for item in self.runtime_status.snapshot()
+        ]
+        return self._panel(
+            ft.Column(
+                controls=[
+                    ft.Text("Senna Health", color=TEXT, weight=ft.FontWeight.W_600),
+                    self.health_summary,
+                    self.health_list,
+                ],
+                spacing=10,
+            )
+        )
+
+    def _update_health_controls(self) -> None:
+        self.health_summary.value = self.runtime_status.summary()
+        for item in self.runtime_status.snapshot():
+            controls = self._health_controls.get(item.key)
+            if controls is None:
+                self.health_list.controls.append(self._health_row(item))
+                continue
+            color = self._health_color(item.state)
+            controls["dot"].bgcolor = color
+            controls["label"].value = item.label
+            controls["state"].value = item.state.value
+            controls["state"].color = color
+            controls["detail"].value = self._health_detail(item)
 
     def _dashboard(self) -> ft.Control:
         self._refresh_live_health()
@@ -499,16 +642,7 @@ class SenaFletUI:
             [
                 self._title("Dashboard", "Runtime overview dan health Senna"),
                 cards,
-                self._panel(
-                    ft.Column(
-                        controls=[
-                            ft.Text("Senna Health", color=TEXT, weight=ft.FontWeight.W_600),
-                            ft.Text(runtime.summary(), color=MUTED, size=11),
-                            *[self._health_row(item) for item in runtime.snapshot()],
-                        ],
-                        spacing=10,
-                    )
-                ),
+                self._render_health_panel(),
                 self._panel(
                     ft.Column(
                         controls=[
@@ -1044,6 +1178,7 @@ class SenaFletUI:
                 HealthState.READY,
                 detail=f"MP3 generated: {output.name}",
                 latency_ms=latency_ms,
+                last_success_at=time.time(),
             )
         except Exception as error:
             self.tts_test_status.value = (
@@ -1791,7 +1926,7 @@ class SenaFletUI:
         while self.page is not None:
             self._refresh_live_health()
             if self._selected_index == 0:
-                self.content.content = self._dashboard()
+                self._update_health_controls()
                 self.page.update()
             await asyncio.sleep(2.5)
 

@@ -48,13 +48,17 @@ class OpenAICompatibleProvider(LLMProvider):
         self._session: aiohttp.ClientSession | None = None
         self._last_latency_ms: float | None = None
         self._last_error: str | None = None
+        self._last_attempt_at: float | None = None
         self._last_success_at: float | None = None
+        self._consecutive_failures = 0
 
     def runtime_health(self) -> dict[str, object]:
         return {
             "latency_ms": self._last_latency_ms,
             "last_error": self._last_error,
+            "last_attempt_at": self._last_attempt_at,
             "last_success_at": self._last_success_at,
+            "consecutive_failures": self._consecutive_failures,
         }
 
     async def _get_session(self) -> aiohttp.ClientSession:
@@ -175,6 +179,7 @@ class OpenAICompatibleProvider(LLMProvider):
             payload["session_id"] = cache_key[:256]
 
         started = monotonic()
+        self._last_attempt_at = time.time()
         print(
             f"[SENA] request started provider={self._provider_name} model={model} "
             f"prefill={'on' if assistant_prefill else 'off'} "
@@ -216,6 +221,7 @@ class OpenAICompatibleProvider(LLMProvider):
                         self._last_latency_ms = (monotonic() - started) * 1000.0
                         self._last_error = None
                         self._last_success_at = time.time()
+                        self._consecutive_failures = 0
                         return text
             except (aiohttp.ClientError, asyncio.TimeoutError) as error:
                 last_error = error
@@ -226,6 +232,7 @@ class OpenAICompatibleProvider(LLMProvider):
                 )
                 await asyncio.sleep(self._retry_delay_seconds * attempt)
         self._last_error = f"{type(last_error).__name__}: {last_error}"
+        self._consecutive_failures += 1
         raise LLMProviderError(
             f"{self._provider_name} gagal setelah "
             f"{self._retry_count + 1} percobaan: {last_error}"

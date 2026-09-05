@@ -17,7 +17,12 @@ from core.feature_loader import FeatureLoadResult, feature_health_summary, load_
 from core.io import ainput
 from core.registry import FEATURES
 from core.runtime_log import install_runtime_log_capture, restore_runtime_log_capture
-from core.runtime_status import HealthState, RuntimeStatus
+from core.runtime_status import (
+    HealthState,
+    RuntimeStatus,
+    dependency_state,
+    provider_state_from_health,
+)
 
 MessageDisplay = Callable[[discord.Message, AppContext], Awaitable[None]]
 
@@ -230,15 +235,16 @@ def _build_runtime_status(
     provider_health = health_reader() if callable(health_reader) else {}
     for key, label in (("openrouter", "OpenRouter"), ("nvidia_nim", "NVIDIA NIM")):
         configured = key in provider_health
+        provider_state, provider_detail = (
+            provider_state_from_health(provider_health[key])
+            if configured
+            else (HealthState.UNAVAILABLE, "not configured or API key missing")
+        )
         status.update(
             key,
             label,
-            HealthState.READY if configured else HealthState.UNAVAILABLE,
-            detail=(
-                "configured; waiting for first request"
-                if configured
-                else "not configured or API key missing"
-            ),
+            provider_state,
+            detail=provider_detail,
         )
     status.update(
         "memory",
@@ -282,22 +288,24 @@ def _build_runtime_status(
         "tts",
         "TTS / gTTS",
         HealthState.READY if tts_ready else HealthState.UNAVAILABLE,
-        detail="standalone synthesis available" if tts_ready else "gTTS missing",
+        detail="library installed; not yet tested" if tts_ready else "gTTS missing",
     )
     voice_missing: list[str] = []
     if importlib.util.find_spec("nacl") is None:
         voice_missing.append("PyNaCl")
     if shutil.which("ffmpeg") is None:
         voice_missing.append("FFmpeg")
+    if not device.is_android and importlib.util.find_spec("davey") is None:
+        voice_missing.append("davey")
+    voice_state, voice_detail = dependency_state(
+        voice_missing,
+        ready_detail="transport dependencies ready",
+    )
     status.update(
         "voice_tx",
         "Voice TX",
-        HealthState.DEGRADED if voice_missing else HealthState.READY,
-        detail=(
-            "missing " + ", ".join(voice_missing)
-            if voice_missing
-            else "transport dependencies ready"
-        ),
+        voice_state,
+        detail=voice_detail,
     )
     voice_feature = feature_results.get("voice")
     machine = device.machine.casefold()
@@ -375,6 +383,8 @@ async def run(token: str) -> None:
         scheduler,
         music,
     )
+    ctx.expression_service = expression_service
+    ctx.action_executor = action_executor
     runtime_status = _build_runtime_status(
         assistant,
         message_router,

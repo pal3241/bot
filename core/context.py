@@ -4,8 +4,10 @@ from typing import TYPE_CHECKING
 import discord
 
 if TYPE_CHECKING:
+    from actions.executor import ActionExecutor
     from assistant.manager import AssistantManager
     from core.device import DeviceInfo
+    from expression.service import ExpressionService
     from music.manager import MusicManager
     from scheduler.manager import SchedulerManager
 
@@ -17,6 +19,8 @@ class AppContext:
     device: "DeviceInfo | None" = None
     scheduler: "SchedulerManager | None" = None
     music: "MusicManager | None" = None
+    expression_service: "ExpressionService | None" = None
+    action_executor: "ActionExecutor | None" = None
     guild: discord.Guild | None = None
     channel: discord.TextChannel | None = None
     voice_channel: discord.VoiceChannel | None = None

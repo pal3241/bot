@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -41,6 +42,8 @@ class LLMManager:
         self._tier_fallback_targets = dict(tier_fallback_targets or {})
         self._tier_timeout_seconds = dict(tier_timeout_seconds or {})
         self._route_errors: dict[str, str] = {}
+        self._route_attempts: dict[str, float] = {}
+        self._route_failures: dict[str, int] = {}
         self._json_prefill_enabled = json_prefill_enabled
         self._prompt_cache_enabled = prompt_cache_enabled
         self._provider_name = primary.provider_name
@@ -67,6 +70,8 @@ class LLMManager:
             item = dict(value) if isinstance(value, dict) else {}
             if name in self._route_errors:
                 item["last_error"] = self._route_errors[name]
+                item["last_attempt_at"] = self._route_attempts.get(name)
+                item["consecutive_failures"] = self._route_failures.get(name, 1)
             result[name] = item
         return result
 
@@ -137,6 +142,7 @@ class LLMManager:
                         cache_key=cache_key,
                     )
                     self._route_errors.pop(target.provider_name, None)
+                    self._route_failures.pop(target.provider_name, None)
                     return response
                 remaining = route_timeout - (
                     asyncio.get_running_loop().time() - route_started
@@ -151,6 +157,7 @@ class LLMManager:
                         cache_key=cache_key,
                     )
                     self._route_errors.pop(target.provider_name, None)
+                    self._route_failures.pop(target.provider_name, None)
                     return response
             except TimeoutError:
                 timeout_detail = (
@@ -159,6 +166,10 @@ class LLMManager:
                     else f"route {tier.value} provider timeout"
                 )
                 self._route_errors[target.provider_name] = timeout_detail
+                self._route_attempts[target.provider_name] = time.time()
+                self._route_failures[target.provider_name] = (
+                    self._route_failures.get(target.provider_name, 0) + 1
+                )
                 failures.append(
                     f"{self._target_label(target)}={timeout_detail}"
                 )
@@ -169,6 +180,10 @@ class LLMManager:
                 break
             except LLMProviderError as error:
                 self._route_errors[target.provider_name] = str(error)
+                self._route_attempts[target.provider_name] = time.time()
+                self._route_failures[target.provider_name] = (
+                    self._route_failures.get(target.provider_name, 0) + 1
+                )
                 failures.append(f"{self._target_label(target)}={error}")
                 if index + 1 < len(candidates):
                     print(
