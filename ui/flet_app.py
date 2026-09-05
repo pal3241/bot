@@ -1230,10 +1230,10 @@ class SenaFletUI:
                     chat_timeout_seconds=float(self.ai_chat_timeout.value or "0"),
                     history_max_messages=int(self.ai_history.value or "0"),
                     routing_enabled=bool(self.ai_routing_enabled.value),
-                    fast_provider=str(self.ai_fast_provider.value or "primary"),
+                    fast_provider=str(self.ai_fast_provider.value or "openrouter"),
                     fast_model=(self.ai_fast_model.value or "").strip(),
                     standard_provider=str(
-                        self.ai_standard_provider.value or "primary"
+                        self.ai_standard_provider.value or "openrouter"
                     ),
                     standard_model=(self.ai_standard_model.value or "").strip(),
                     complex_provider=str(
@@ -1260,10 +1260,13 @@ class SenaFletUI:
     async def _reset_routing_defaults(self, e: Any) -> None:
         del e
         self.ai_routing_enabled.value = True
-        self.ai_fast_provider.value = "primary"
-        self.ai_fast_model.value = ""
-        self.ai_standard_provider.value = "primary"
-        self.ai_standard_model.value = ""
+        openrouter_model = (
+            (self.ai_openrouter.value or "").strip() or "openai/gpt-4o-mini"
+        )
+        self.ai_fast_provider.value = "openrouter"
+        self.ai_fast_model.value = openrouter_model
+        self.ai_standard_provider.value = "openrouter"
+        self.ai_standard_model.value = openrouter_model
         self.ai_complex_provider.value = "nvidia_nim"
         self.ai_complex_model.value = "moonshotai/kimi-k3"
         self.ai_fallback_provider.value = "openrouter"
@@ -1392,22 +1395,22 @@ class SenaFletUI:
         )
         self.ai_fast_provider = ft.Dropdown(
             label="FAST provider",
-            value=settings.fast_provider if settings else "primary",
+            value=settings.fast_provider if settings else "openrouter",
             options=self._options(route_provider_items),
         )
         self.ai_fast_model = ft.TextField(
             label="FAST model (kosong = model provider/primary)",
-            value=settings.fast_model if settings else "",
+            value=settings.fast_model if settings else "openai/gpt-4o-mini",
             border_color=BORDER,
         )
         self.ai_standard_provider = ft.Dropdown(
             label="STANDARD provider",
-            value=settings.standard_provider if settings else "primary",
+            value=settings.standard_provider if settings else "openrouter",
             options=self._options(route_provider_items),
         )
         self.ai_standard_model = ft.TextField(
             label="STANDARD model (kosong = model provider/primary)",
-            value=settings.standard_model if settings else "",
+            value=settings.standard_model if settings else "openai/gpt-4o-mini",
             border_color=BORDER,
         )
         self.ai_complex_provider = ft.Dropdown(
