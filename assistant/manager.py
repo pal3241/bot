@@ -610,6 +610,25 @@ def _route_target(
     return ModelTarget(provider, clean_model or _model_for_provider(settings, provider))
 
 
+def _fast_safe_target(settings: AISettings, target: ModelTarget) -> ModelTarget:
+    if target.provider_name != "nvidia_nim":
+        return target
+    print(
+        "[SENA ROUTER] fast route refused slow provider=nvidia_nim; "
+        "using openrouter instead"
+    )
+    return ModelTarget("openrouter", settings.openrouter_model)
+
+
+def _openrouter_fallback(settings: AISettings) -> ModelTarget:
+    fallback_model = (
+        settings.fallback_model.strip()
+        if settings.fallback_provider == "openrouter"
+        else ""
+    )
+    return ModelTarget("openrouter", fallback_model or settings.openrouter_model)
+
+
 def build_llm_manager(settings: AISettings) -> LLMManager:
     primary = ModelTarget(
         settings.provider_name,
@@ -618,11 +637,14 @@ def build_llm_manager(settings: AISettings) -> LLMManager:
     routing_enabled = settings.routing_enabled
 
     if routing_enabled:
-        fast = _route_target(
+        fast = _fast_safe_target(
             settings,
-            settings.fast_provider,
-            settings.fast_model,
-            primary,
+            _route_target(
+                settings,
+                settings.fast_provider,
+                settings.fast_model,
+                primary,
+            ),
         )
         standard = _route_target(
             settings,
@@ -645,7 +667,8 @@ def build_llm_manager(settings: AISettings) -> LLMManager:
     else:
         fast = standard = complex_target = fallback = primary
 
-    targets = (primary, fast, standard, complex_target, fallback)
+    fast_fallback = _openrouter_fallback(settings)
+    targets = (primary, fast, standard, complex_target, fallback, fast_fallback)
     providers: dict[str, object] = {}
     for provider_name in dict.fromkeys(target.provider_name for target in targets):
         try:
@@ -677,6 +700,11 @@ def build_llm_manager(settings: AISettings) -> LLMManager:
             RoutingTier.COMPLEX: complex_target,
         },
         fallback_targets=(fallback, primary),
+        tier_fallback_targets={
+            RoutingTier.FAST: (fast_fallback,),
+            RoutingTier.STANDARD: (fast_fallback,),
+            RoutingTier.COMPLEX: (fallback, primary),
+        },
         json_prefill_enabled=settings.json_prefill_enabled,
         prompt_cache_enabled=settings.prompt_cache_enabled,
     )
