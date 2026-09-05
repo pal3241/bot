@@ -526,6 +526,9 @@ class AssistantManager:
             previous_sessions.clear()
             await previous_llm.close()
 
+    def llm_health(self) -> dict[str, dict[str, object]]:
+        return self._llm.provider_health()
+
 
 def build_assistant_manager() -> AssistantManager:
     settings = load_settings(
