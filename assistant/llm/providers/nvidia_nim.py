@@ -20,5 +20,21 @@ class NvidiaNimProvider(OpenAICompatibleProvider):
             retry_count=retry_count,
             retry_delay_seconds=retry_delay_seconds,
             extra_headers={},
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            extra_body={},
         )
+
+    def _request_extra_body(self, model: str, json_object: bool) -> dict[str, object]:
+        normalized = model.strip().casefold()
+        if normalized == "moonshotai/kimi-k3":
+            body: dict[str, object] = {
+                "temperature": 1.0,
+                "reasoning_effort": "max",
+            }
+            if json_object:
+                body["response_format"] = {"type": "json_object"}
+            return body
+
+        body = {"chat_template_kwargs": {"enable_thinking": False}}
+        if json_object:
+            body["response_format"] = {"type": "json_object"}
+        return body
