@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -40,6 +41,9 @@ class LLMManager:
         self._fallback_targets = fallback_targets
         self._tier_fallback_targets = dict(tier_fallback_targets or {})
         self._tier_timeout_seconds = dict(tier_timeout_seconds or {})
+        self._route_errors: dict[str, str] = {}
+        self._route_attempts: dict[str, float] = {}
+        self._route_failures: dict[str, int] = {}
         self._json_prefill_enabled = json_prefill_enabled
         self._prompt_cache_enabled = prompt_cache_enabled
         self._provider_name = primary.provider_name
@@ -57,6 +61,19 @@ class LLMManager:
 
     def _describe(self, tier: RoutingTier) -> str:
         return self._target_label(self._routes[tier])
+
+    def provider_health(self) -> dict[str, dict[str, object]]:
+        result: dict[str, dict[str, object]] = {}
+        for name, provider in self._providers.items():
+            health = getattr(provider, "runtime_health", None)
+            value = health() if callable(health) else {}
+            item = dict(value) if isinstance(value, dict) else {}
+            if name in self._route_errors:
+                item["last_error"] = self._route_errors[name]
+                item["last_attempt_at"] = self._route_attempts.get(name)
+                item["consecutive_failures"] = self._route_failures.get(name, 1)
+            result[name] = item
+        return result
 
     def _candidates(self, tier: RoutingTier) -> tuple[ModelTarget, ...]:
         tier_fallbacks = self._tier_fallback_targets.get(tier, self._fallback_targets)
@@ -118,34 +135,55 @@ class LLMManager:
                     f"target={self._target_label(target)}"
                 )
                 if route_timeout is None:
-                    return await self._chat_target(
+                    response = await self._chat_target(
                         target,
                         messages,
                         json_prefill=json_prefill,
                         cache_key=cache_key,
                     )
+                    self._route_errors.pop(target.provider_name, None)
+                    self._route_failures.pop(target.provider_name, None)
+                    return response
                 remaining = route_timeout - (
                     asyncio.get_running_loop().time() - route_started
                 )
                 if remaining <= 0:
                     break
                 async with asyncio.timeout(remaining):
-                    return await self._chat_target(
+                    response = await self._chat_target(
                         target,
                         messages,
                         json_prefill=json_prefill,
                         cache_key=cache_key,
                     )
+                    self._route_errors.pop(target.provider_name, None)
+                    self._route_failures.pop(target.provider_name, None)
+                    return response
             except TimeoutError:
+                timeout_detail = (
+                    f"route {tier.value} deadline {route_timeout:g}s"
+                    if route_timeout is not None
+                    else f"route {tier.value} provider timeout"
+                )
+                self._route_errors[target.provider_name] = timeout_detail
+                self._route_attempts[target.provider_name] = time.time()
+                self._route_failures[target.provider_name] = (
+                    self._route_failures.get(target.provider_name, 0) + 1
+                )
                 failures.append(
-                    f"{self._target_label(target)}=deadline {route_timeout:g}s"
+                    f"{self._target_label(target)}={timeout_detail}"
                 )
                 print(
-                    f"[SENA ROUTER] deadline tier={tier.value} "
-                    f"limit={route_timeout:g}s target={self._target_label(target)}"
+                    f"[SENA ROUTER] timeout tier={tier.value} "
+                    f"detail={timeout_detail} target={self._target_label(target)}"
                 )
                 break
             except LLMProviderError as error:
+                self._route_errors[target.provider_name] = str(error)
+                self._route_attempts[target.provider_name] = time.time()
+                self._route_failures[target.provider_name] = (
+                    self._route_failures.get(target.provider_name, 0) + 1
+                )
                 failures.append(f"{self._target_label(target)}={error}")
                 if index + 1 < len(candidates):
                     print(

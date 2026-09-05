@@ -177,6 +177,15 @@ Pilihan **Ikuti Primary** memakai provider dan model utama. Nilai yang diterapka
 dari UI disimpan ke `data/ai_settings.json` dan langsung aktif tanpa restart.
 File konfigurasi lama dimigrasikan otomatis dengan default routing yang aman.
 
+## Live Runtime Health
+
+Dashboard memperbarui kondisi subsystem secara berkala tanpa melakukan ping API
+tambahan. OpenRouter dan NVIDIA NIM menampilkan latency dari request nyata serta
+error terakhir. Discord, AI, Memory, Actions, Router, Expression, Scheduler,
+Music, TTS, Voice TX, STT RX, dan Flet memiliki status `READY`, `DEGRADED`,
+`UNAVAILABLE`, atau `STARTING`. Hasil Generate/Test TTS dan Speak in VC langsung
+memperbarui status terkait.
+
 ## Emoji Manager
 
 Atur lokasi GIF melalui `.env`:

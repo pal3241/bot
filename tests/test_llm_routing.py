@@ -236,6 +236,15 @@ class LLMManagerRoutingTests(unittest.IsolatedAsyncioTestCase):
                 [ChatMessage("user", "halo")],
                 tier=RoutingTier.FAST,
             )
+        self.assertEqual(
+            manager.provider_health()["openrouter"]["last_error"],
+            "route fast deadline 0.01s",
+        )
+        self.assertIn("last_attempt_at", manager.provider_health()["openrouter"])
+        self.assertEqual(
+            manager.provider_health()["openrouter"]["consecutive_failures"],
+            1,
+        )
         await manager.close()
 
 
