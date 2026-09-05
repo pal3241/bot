@@ -1,5 +1,7 @@
 import asyncio
+import shutil
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -110,6 +112,26 @@ class VoiceManager:
             await self.play_prepared(voice_client, prepared)
         finally:
             await self.cleanup_prepared(prepared)
+
+    async def generate_test(
+        self,
+        text: str,
+        output_folder: Path = Path("data/tts-tests"),
+    ) -> Path:
+        """Generate a persistent TTS sample without requiring Discord voice."""
+        if not text.strip():
+            raise ValueError("Teks test TTS tidak boleh kosong.")
+        audio_file: Path = await self.provider.synthesize(text, self.language)
+        output_folder.mkdir(parents=True, exist_ok=True)
+        output: Path = output_folder / f"tts-test-{uuid.uuid4().hex[:12]}.mp3"
+        try:
+            await asyncio.to_thread(shutil.move, str(audio_file), str(output))
+        except Exception:
+            if audio_file.exists():
+                audio_file.unlink()
+            raise
+        print(f"[VOICE] TTS test generated path={output.resolve()}")
+        return output
 
     async def prepare(self, text: str) -> PreparedAudio:
         total_started: float = time.perf_counter()
