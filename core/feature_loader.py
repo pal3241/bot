@@ -41,7 +41,10 @@ DEFAULT_FEATURE_SPECS: tuple[FeatureSpec, ...] = (
     FeatureSpec("emoji", "features.emoji", "Emoji Manager"),
     FeatureSpec("chat", "features.chat", "Terminal Chat"),
     FeatureSpec("ai", "features.ai", "AI Settings"),
-    FeatureSpec("voice", "features.voice", "Voice / STT / TTS"),
+    # TTS synthesis is intentionally checked independently from Discord voice receive.
+    # gTTS works on Android/Termux even when discord-ext-voice-recv/Faster Whisper do not.
+    FeatureSpec("tts", "voice.providers.gtts_provider", "TTS / gTTS"),
+    FeatureSpec("voice", "features.voice", "Discord Voice / STT"),
 )
 
 
