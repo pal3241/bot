@@ -101,8 +101,8 @@ Menu **AI Settings** berada pada nomor 4. Pengaturan provider, model, token, tim
 
 ### Keamanan Control Center
 
-Web UI hanya bind ke `127.0.0.1` secara default. Jika dashboard perlu dibuka
-dari laptop atau device lain di LAN, isi host dan PIN di `.env`:
+Web UI bind ke `0.0.0.0` secara default agar dashboard dapat dibuka dari laptop
+atau device lain di LAN. PIN bersifat opsional, tetapi sebaiknya diisi:
 
 ```env
 SENA_WEB_HOST=0.0.0.0
@@ -110,10 +110,12 @@ SENA_WEB_PORT=8550
 SENA_WEB_PIN=ubah-dengan-pin-yang-kuat
 ```
 
-Senna menolak membuka Web UI ke LAN jika `SENA_WEB_PIN` kosong. Tombol logout,
-reset chat session, restart, dan shutdown tersedia di tab **Settings**. Reset
-session hanya membersihkan history jangka pendek serta status aktif/diam; memory
-jangka panjang, personality, jadwal, dan konfigurasi tidak ikut dihapus.
+Jika `SENA_WEB_PIN` kosong, dashboard tetap bisa dibuka dari LAN dan Senna
+menampilkan peringatan keamanan di log. Gunakan `SENA_WEB_HOST=127.0.0.1` jika
+ingin membatasi dashboard ke device host. Tombol logout, reset chat session,
+restart, dan shutdown tersedia di tab **Settings**. Reset session hanya
+membersihkan history jangka pendek serta status aktif/diam; memory jangka
+panjang, personality, jadwal, dan konfigurasi tidak ikut dihapus.
 
 ## Prompt prefill dan model routing
 
