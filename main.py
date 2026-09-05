@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -273,6 +274,7 @@ async def run(token: str) -> None:
         action_executor,
     )
     flet_ui: Any | None = None
+    restart_requested = False
 
     async def on_message(message: discord.Message) -> None:
         if flet_ui is not None:
@@ -369,6 +371,7 @@ async def run(token: str) -> None:
         if flet_ui is not None:
             try:
                 await flet_ui.run()
+                restart_requested = flet_ui.restart_requested
             except asyncio.CancelledError:
                 raise
             except Exception as error:
@@ -408,6 +411,10 @@ async def run(token: str) -> None:
         if not client.is_closed():
             await client.close()
         await discord_task
+
+    if restart_requested:
+        print("[RESTART] Menjalankan ulang Senna...")
+        os.execv(sys.executable, [sys.executable, *sys.argv])
 
 
 def get_token() -> str:
