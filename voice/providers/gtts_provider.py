@@ -26,8 +26,12 @@ class GTTSProvider(TTSProvider):
         for percobaan in range(1, TTS_RETRY_COUNT + 1):
             try:
                 await asyncio.to_thread(self._generate, text, language, output)
+                if not output.is_file() or output.stat().st_size <= 0:
+                    raise OSError("gTTS menghasilkan file audio kosong.")
                 return output
             except (gTTSError, OSError) as error:
+                if output.exists():
+                    output.unlink()
                 if percobaan == TTS_RETRY_COUNT:
                     raise RuntimeError(
                         f"gTTS gagal setelah {TTS_RETRY_COUNT} percobaan: {error}"
@@ -43,4 +47,3 @@ class GTTSProvider(TTSProvider):
     def _generate(self, text: str, language: str, output: Path) -> None:
         tts: gTTS = gTTS(text=text, lang=language)
         tts.save(str(output))
-

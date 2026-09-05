@@ -359,6 +359,15 @@ async def atur_protect(manager: VoiceManager) -> None:
     print(f"Protect aktif: {settings.protect:.2f}")
 
 
+async def generate_test_tts(manager: VoiceManager) -> None:
+    text: str = (await ainput("Teks test: ")).strip()
+    if not text:
+        raise ValueError("Teks test tidak boleh kosong.")
+    print("Generating TTS tanpa Discord VC...")
+    output: Path = await manager.generate_test(text)
+    print(f"TTS sehat. MP3 dibuat: {output.resolve()}")
+
+
 async def test_suara(ctx: AppContext, manager: VoiceManager) -> None:
     voice_client: discord.VoiceClient | None = await join_voice_channel(ctx)
     if voice_client is None:
@@ -426,7 +435,8 @@ async def terminal_tts_menu(ctx: AppContext, manager: VoiceManager) -> None:
         print("\n1. Kirim TTS / Queue")
         print("2. Pilih TTS provider")
         print("3. Atur bahasa")
-        print("4. Test TTS")
+        print("4. Generate/Test TTS (tanpa VC)")
+        print("5. Speak in VC")
         print("\nexit = kembali")
         pilihan: str = (await ainput("\nPilih: ")).strip().lower()
         if pilihan == "1":
@@ -436,6 +446,8 @@ async def terminal_tts_menu(ctx: AppContext, manager: VoiceManager) -> None:
         elif pilihan == "3":
             await pilih_bahasa(manager)
         elif pilihan == "4":
+            await generate_test_tts(manager)
+        elif pilihan == "5":
             await test_suara(ctx, manager)
         elif pilihan == "exit":
             return
