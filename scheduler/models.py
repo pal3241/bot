@@ -17,6 +17,10 @@ class ScheduledJob:
     created_at: str
     last_run_at: str | None
     run_count: int
+    retry_count: int = 0
+    max_retries: int = 5
+    last_error: str | None = None
+    failed_at: str | None = None
 
     @property
     def content(self) -> str:

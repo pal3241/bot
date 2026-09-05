@@ -55,6 +55,18 @@ def _row_to_schedule(row: aiosqlite.Row) -> ScheduledJob:
             else None
         ),
         run_count=int(row["run_count"]),
+        retry_count=int(row["retry_count"]),
+        max_retries=int(row["max_retries"]),
+        last_error=(
+            str(row["last_error"])
+            if row["last_error"] is not None
+            else None
+        ),
+        failed_at=(
+            str(row["failed_at"])
+            if row["failed_at"] is not None
+            else None
+        ),
     )
 
 
@@ -85,7 +97,11 @@ class ScheduleStore:
                 active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL,
                 last_run_at TEXT,
-                run_count INTEGER NOT NULL DEFAULT 0
+                run_count INTEGER NOT NULL DEFAULT 0,
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                max_retries INTEGER NOT NULL DEFAULT 5,
+                last_error TEXT,
+                failed_at TEXT
             )
             """
         )
@@ -101,6 +117,18 @@ class ScheduleStore:
             )
         if "payload_json" not in columns:
             await connection.execute("ALTER TABLE schedules ADD COLUMN payload_json TEXT")
+        if "retry_count" not in columns:
+            await connection.execute(
+                "ALTER TABLE schedules ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0"
+            )
+        if "max_retries" not in columns:
+            await connection.execute(
+                "ALTER TABLE schedules ADD COLUMN max_retries INTEGER NOT NULL DEFAULT 5"
+            )
+        if "last_error" not in columns:
+            await connection.execute("ALTER TABLE schedules ADD COLUMN last_error TEXT")
+        if "failed_at" not in columns:
+            await connection.execute("ALTER TABLE schedules ADD COLUMN failed_at TEXT")
 
         await connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(active, next_run_at)"
@@ -129,6 +157,7 @@ class ScheduleStore:
         payload: dict[str, object],
         next_run_at: str,
         recurrence_seconds: int | None,
+        max_retries: int = 5,
     ) -> ScheduledJob:
         connection = self._require_connection()
         normalized_type = job_type.strip().casefold()
@@ -156,8 +185,8 @@ class ScheduleStore:
             INSERT INTO schedules (
                 guild_id, channel_id, creator_id, content, mention_user_id,
                 job_type, payload_json, next_run_at, recurrence_seconds,
-                active, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                active, created_at, max_retries
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
             """,
             (
                 guild_id,
@@ -170,6 +199,7 @@ class ScheduleStore:
                 next_run_at,
                 recurrence_seconds,
                 utc_now(),
+                max_retries,
             ),
         )
         await connection.commit()
@@ -235,12 +265,28 @@ class ScheduleStore:
         await cursor.close()
         return changed
 
+    async def run_now(self, schedule_id: int, next_run_at: str) -> bool:
+        connection = self._require_connection()
+        cursor = await connection.execute(
+            """
+            UPDATE schedules
+            SET next_run_at = ?, failed_at = NULL, last_error = NULL
+            WHERE id = ? AND active = 1
+            """,
+            (next_run_at, schedule_id),
+        )
+        await connection.commit()
+        changed = cursor.rowcount == 1
+        await cursor.close()
+        return changed
+
     async def mark_complete(self, schedule_id: int, last_run_at: str) -> None:
         connection = self._require_connection()
         await connection.execute(
             """
             UPDATE schedules
-            SET active = 0, last_run_at = ?, run_count = run_count + 1
+            SET active = 0, last_run_at = ?, run_count = run_count + 1,
+                retry_count = 0, last_error = NULL, failed_at = NULL
             WHERE id = ?
             """,
             (last_run_at, schedule_id),
@@ -254,18 +300,49 @@ class ScheduleStore:
         await connection.execute(
             """
             UPDATE schedules
-            SET next_run_at = ?, last_run_at = ?, run_count = run_count + 1
+            SET next_run_at = ?, last_run_at = ?, run_count = run_count + 1,
+                retry_count = 0, last_error = NULL, failed_at = NULL
             WHERE id = ? AND active = 1
             """,
             (next_run_at, last_run_at, schedule_id),
         )
         await connection.commit()
 
-    async def defer(self, schedule_id: int, next_run_at: str) -> None:
+    async def defer(
+        self,
+        schedule_id: int,
+        next_run_at: str,
+        *,
+        retry_count: int,
+        last_error: str,
+    ) -> None:
         connection = self._require_connection()
         await connection.execute(
-            "UPDATE schedules SET next_run_at = ? WHERE id = ? AND active = 1",
-            (next_run_at, schedule_id),
+            """
+            UPDATE schedules
+            SET next_run_at = ?, retry_count = ?, last_error = ?, failed_at = NULL
+            WHERE id = ? AND active = 1
+            """,
+            (next_run_at, retry_count, last_error, schedule_id),
+        )
+        await connection.commit()
+
+    async def mark_failed(
+        self,
+        schedule_id: int,
+        failed_at: str,
+        *,
+        retry_count: int,
+        last_error: str,
+    ) -> None:
+        connection = self._require_connection()
+        await connection.execute(
+            """
+            UPDATE schedules
+            SET active = 0, failed_at = ?, retry_count = ?, last_error = ?
+            WHERE id = ? AND active = 1
+            """,
+            (failed_at, retry_count, last_error, schedule_id),
         )
         await connection.commit()
 
