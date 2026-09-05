@@ -69,6 +69,8 @@ class SenaFletUI:
         self._selected_index = 0
         self._compact = False
         self._chat_lines: list[str] = []
+        self._shutdown_event = asyncio.Event()
+        self._restart_requested = False
 
         self.content = ft.Container(expand=True, bgcolor=BG)
         self.chat_view = ft.TextField(
@@ -212,6 +214,65 @@ class SenaFletUI:
             ),
         )
 
+    @property
+    def restart_requested(self) -> bool:
+        return self._restart_requested
+
+    async def _show_process_confirmation(self, *, restart: bool) -> None:
+        if self.page is None:
+            return
+
+        action_label = "Restart Bot" if restart else "Matikan Bot"
+        explanation = (
+            "Senna akan menutup semua subsystem dengan rapi, lalu menjalankan "
+            "ulang program."
+            if restart
+            else "Senna akan menutup semua subsystem dan keluar dari program."
+        )
+
+        async def cancel(e: Any) -> None:
+            del e
+            if self.page is not None:
+                self.page.close(dialog)
+
+        async def confirm(e: Any) -> None:
+            del e
+            if self.page is not None:
+                self.page.close(dialog)
+            self._restart_requested = restart
+            print(
+                f"[SENA UI] process action confirmed "
+                f"action={'restart' if restart else 'shutdown'}"
+            )
+            self._shutdown_event.set()
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(f"Konfirmasi {action_label}"),
+            content=ft.Text(explanation),
+            actions=[
+                ft.Button("Batal", on_click=cancel),
+                ft.Button(
+                    action_label,
+                    icon=(
+                        ft.Icons.RESTART_ALT
+                        if restart
+                        else ft.Icons.POWER_SETTINGS_NEW
+                    ),
+                    on_click=confirm,
+                ),
+            ],
+        )
+        self.page.open(dialog)
+
+    async def _request_restart(self, e: Any) -> None:
+        del e
+        await self._show_process_confirmation(restart=True)
+
+    async def _request_shutdown(self, e: Any) -> None:
+        del e
+        await self._show_process_confirmation(restart=False)
+
     # ---------- dashboard ----------
     def _dashboard(self) -> ft.Control:
         runtime = self.runtime_status
@@ -285,6 +346,45 @@ class SenaFletUI:
                         controls=[
                             ft.Text("Feature health", color=TEXT, weight=ft.FontWeight.W_600),
                             *feature_rows,
+                        ],
+                        spacing=10,
+                    )
+                ),
+                self._panel(
+                    ft.Column(
+                        controls=[
+                            ft.Text(
+                                "Kontrol bot",
+                                color=TEXT,
+                                weight=ft.FontWeight.W_600,
+                            ),
+                            ft.Text(
+                                "Restart atau matikan proses Senna dengan shutdown yang aman.",
+                                color=MUTED,
+                                size=11,
+                            ),
+                            ft.ResponsiveRow(
+                                controls=[
+                                    ft.Container(
+                                        col={"xs": 12, "sm": 6},
+                                        content=ft.Button(
+                                            "Restart Bot",
+                                            icon=ft.Icons.RESTART_ALT,
+                                            on_click=self._request_restart,
+                                        ),
+                                    ),
+                                    ft.Container(
+                                        col={"xs": 12, "sm": 6},
+                                        content=ft.Button(
+                                            "Matikan Bot",
+                                            icon=ft.Icons.POWER_SETTINGS_NEW,
+                                            on_click=self._request_shutdown,
+                                        ),
+                                    ),
+                                ],
+                                spacing=10,
+                                run_spacing=10,
+                            ),
                         ],
                         spacing=10,
                     )
@@ -1400,6 +1500,29 @@ class SenaFletUI:
             print(f"[SENA UI] Starting web server host={WEB_HOST} port={WEB_PORT}")
             print(f"[SENA UI] Open on this phone: http://127.0.0.1:{WEB_PORT}")
             print(f"[SENA UI] Open from laptop: http://<PHONE-LAN-IP>:{WEB_PORT}")
-            await ft.run_async(self.main, view=view, host=WEB_HOST, port=WEB_PORT)
+            app_task = asyncio.create_task(
+                ft.run_async(self.main, view=view, host=WEB_HOST, port=WEB_PORT),
+                name="senna-flet-app",
+            )
         else:
-            await ft.run_async(self.main, view=view)
+            app_task = asyncio.create_task(
+                ft.run_async(self.main, view=view),
+                name="senna-flet-app",
+            )
+
+        shutdown_task = asyncio.create_task(
+            self._shutdown_event.wait(),
+            name="senna-ui-shutdown-request",
+        )
+        done, _ = await asyncio.wait(
+            {app_task, shutdown_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if app_task in done:
+            shutdown_task.cancel()
+            await asyncio.gather(shutdown_task, return_exceptions=True)
+            await app_task
+            return
+
+        app_task.cancel()
+        await asyncio.gather(app_task, return_exceptions=True)
