@@ -5,6 +5,7 @@ import importlib.util
 import shutil
 from collections import deque
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -34,6 +35,12 @@ class _GuildMusicState:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
+class MusicReadiness(str, Enum):
+    READY = "READY"
+    DEGRADED = "DEGRADED"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
 class MusicManager:
     def __init__(
         self,
@@ -47,7 +54,29 @@ class MusicManager:
         self._states: dict[int, _GuildMusicState] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
         self._scheduler: SchedulerManager | None = None
-        self.available = True
+        self._closed = False
+
+    def _backend_checks(self) -> dict[str, bool]:
+        return {
+            "resolver": importlib.util.find_spec("yt_dlp") is not None,
+            "ffmpeg": shutil.which(self.settings.ffmpeg_path) is not None,
+            "voice": importlib.util.find_spec("nacl") is not None,
+        }
+
+    @property
+    def readiness(self) -> MusicReadiness:
+        if self._closed:
+            return MusicReadiness.UNAVAILABLE
+        checks = self._backend_checks()
+        if all(checks.values()):
+            return MusicReadiness.READY
+        if any(checks.values()):
+            return MusicReadiness.DEGRADED
+        return MusicReadiness.UNAVAILABLE
+
+    @property
+    def available(self) -> bool:
+        return self.readiness is MusicReadiness.READY
 
     async def start(self) -> None:
         self._loop = asyncio.get_running_loop()
@@ -55,12 +84,13 @@ class MusicManager:
         print(f"[SENA MUSIC] manager started {status}")
 
     def backend_status(self) -> str:
-        yt_dlp_ok = importlib.util.find_spec("yt_dlp") is not None
-        ffmpeg_ok = shutil.which(self.settings.ffmpeg_path) is not None
+        checks = self._backend_checks()
         return (
-            f"resolver={'ok' if yt_dlp_ok else 'missing-yt-dlp'} "
-            f"ffmpeg={'ok' if ffmpeg_ok else 'missing'} "
-            f"voice=runtime profile={self.settings.stream_profile} "
+            f"state={self.readiness.value} "
+            f"resolver={'ok' if checks['resolver'] else 'missing-yt-dlp'} "
+            f"ffmpeg={'ok' if checks['ffmpeg'] else 'missing'} "
+            f"voice={'ok' if checks['voice'] else 'missing-pynacl'} "
+            f"profile={self.settings.stream_profile} "
             f"discord_opus={discord_bitrate_kbps(self.settings.stream_profile)}kbps"
         )
 
@@ -388,5 +418,5 @@ class MusicManager:
                     f"[SENA MUSIC] close failed guild={guild_id} "
                     f"type={type(error).__name__} detail={error}"
                 )
-        self.available = False
+        self._closed = True
         print("[SENA MUSIC] manager stopped")

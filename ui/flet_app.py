@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import os
 import re
 import sys
@@ -49,8 +50,10 @@ MUTED = "#8E8E93"
 SUCCESS = "#69D49D"
 WARNING = "#E6B85C"
 ERROR = "#FF7070"
-WEB_HOST = os.getenv("SENA_WEB_HOST", "0.0.0.0")
+WEB_HOST = os.getenv("SENA_WEB_HOST", "127.0.0.1").strip() or "127.0.0.1"
 WEB_PORT = int(os.getenv("SENA_WEB_PORT", "8550"))
+WEB_PIN = os.getenv("SENA_WEB_PIN", "").strip()
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 class SenaFletUI:
@@ -71,6 +74,7 @@ class SenaFletUI:
         self._chat_lines: list[str] = []
         self._shutdown_event = asyncio.Event()
         self._restart_requested = False
+        self.settings_status = ft.Text("", color=MUTED, size=11)
 
         self.content = ft.Container(expand=True, bgcolor=BG)
         self.chat_view = ft.TextField(
@@ -273,6 +277,63 @@ class SenaFletUI:
         del e
         await self._show_process_confirmation(restart=False)
 
+    async def _reset_current_session(self, e: Any) -> None:
+        del e
+        if self.ctx.assistant is None:
+            self.settings_status.value = "AI Assistant tidak aktif."
+        elif not self.chat_channel.value:
+            self.settings_status.value = "Pilih channel di Terminal Chat terlebih dahulu."
+        else:
+            guild_id = int(self.chat_guild.value) if self.chat_guild.value else None
+            removed = self.ctx.assistant.sessions.clear_channel(
+                source="discord_text",
+                guild_id=guild_id,
+                channel_id=int(self.chat_channel.value),
+            )
+            self.settings_status.value = (
+                f"Session channel direset ({removed} session). Memory jangka panjang tetap aman."
+            )
+        if self.page is not None:
+            self.page.update()
+
+    async def _reset_all_sessions(self, e: Any) -> None:
+        del e
+        if self.page is None:
+            return
+
+        async def cancel(event: Any) -> None:
+            del event
+            if self.page is not None:
+                self.page.close(dialog)
+
+        async def confirm(event: Any) -> None:
+            del event
+            removed = (
+                self.ctx.assistant.sessions.clear()
+                if self.ctx.assistant is not None
+                else 0
+            )
+            self.settings_status.value = (
+                f"Semua session direset ({removed} session). Memory dan konfigurasi tidak dihapus."
+            )
+            if self.page is not None:
+                self.page.close(dialog)
+                self.page.update()
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Reset semua chat session?"),
+            content=ft.Text(
+                "History jangka pendek dan status aktif/diam akan dihapus. "
+                "Memory jangka panjang, personality, jadwal, dan settings tetap tersimpan."
+            ),
+            actions=[
+                ft.Button("Batal", on_click=cancel),
+                ft.Button("Reset Semua", icon=ft.Icons.DELETE_SWEEP, on_click=confirm),
+            ],
+        )
+        self.page.open(dialog)
+
     # ---------- dashboard ----------
     def _dashboard(self) -> ft.Control:
         runtime = self.runtime_status
@@ -346,45 +407,6 @@ class SenaFletUI:
                         controls=[
                             ft.Text("Feature health", color=TEXT, weight=ft.FontWeight.W_600),
                             *feature_rows,
-                        ],
-                        spacing=10,
-                    )
-                ),
-                self._panel(
-                    ft.Column(
-                        controls=[
-                            ft.Text(
-                                "Kontrol bot",
-                                color=TEXT,
-                                weight=ft.FontWeight.W_600,
-                            ),
-                            ft.Text(
-                                "Restart atau matikan proses Senna dengan shutdown yang aman.",
-                                color=MUTED,
-                                size=11,
-                            ),
-                            ft.ResponsiveRow(
-                                controls=[
-                                    ft.Container(
-                                        col={"xs": 12, "sm": 6},
-                                        content=ft.Button(
-                                            "Restart Bot",
-                                            icon=ft.Icons.RESTART_ALT,
-                                            on_click=self._request_restart,
-                                        ),
-                                    ),
-                                    ft.Container(
-                                        col={"xs": 12, "sm": 6},
-                                        content=ft.Button(
-                                            "Matikan Bot",
-                                            icon=ft.Icons.POWER_SETTINGS_NEW,
-                                            on_click=self._request_shutdown,
-                                        ),
-                                    ),
-                                ],
-                                spacing=10,
-                                run_spacing=10,
-                            ),
                         ],
                         spacing=10,
                     )
@@ -1399,6 +1421,67 @@ class SenaFletUI:
                         spacing=6,
                     )
                 ),
+                self._panel(
+                    ft.Column(
+                        controls=[
+                            ft.Text("Session Control", color=TEXT, weight=ft.FontWeight.W_600),
+                            ft.Text(
+                                "Hapus history jangka pendek tanpa menghapus memory, personality, jadwal, atau konfigurasi.",
+                                color=MUTED,
+                                size=11,
+                            ),
+                            ft.ResponsiveRow(
+                                controls=[
+                                    ft.Button(
+                                        "Reset Channel Terpilih",
+                                        icon=ft.Icons.RESTART_ALT,
+                                        on_click=self._reset_current_session,
+                                    ),
+                                    ft.Button(
+                                        "Reset Semua Session",
+                                        icon=ft.Icons.DELETE_SWEEP,
+                                        on_click=self._reset_all_sessions,
+                                    ),
+                                ]
+                            ),
+                            self.settings_status,
+                        ],
+                        spacing=10,
+                    )
+                ),
+                self._panel(
+                    ft.Column(
+                        controls=[
+                            ft.Text("Process Control", color=TEXT, weight=ft.FontWeight.W_600),
+                            ft.Text(
+                                "Restart atau matikan Senna melalui graceful shutdown.",
+                                color=MUTED,
+                                size=11,
+                            ),
+                            ft.ResponsiveRow(
+                                controls=[
+                                    ft.Button(
+                                        "Restart Bot",
+                                        icon=ft.Icons.RESTART_ALT,
+                                        on_click=self._request_restart,
+                                    ),
+                                    ft.Button(
+                                        "Matikan Bot",
+                                        icon=ft.Icons.POWER_SETTINGS_NEW,
+                                        on_click=self._request_shutdown,
+                                    ),
+                                    ft.Button(
+                                        "Logout",
+                                        icon=ft.Icons.LOGOUT,
+                                        on_click=self._logout,
+                                        visible=bool(WEB_PIN and self.device.is_android),
+                                    ),
+                                ]
+                            ),
+                        ],
+                        spacing=10,
+                    )
+                ),
             ]
         )
 
@@ -1466,15 +1549,16 @@ class SenaFletUI:
             ],
         )
 
-    async def main(self, page: ft.Page) -> None:
-        self.page = page
-        self._compact = bool((page.width or 1200) < 820)
+    def _configure_page(self, page: ft.Page) -> None:
         page.title = "Senna Control Center"
         page.theme_mode = ft.ThemeMode.DARK
         page.bgcolor = BG
         page.padding = 0
         page.spacing = 0
         page.theme = ft.Theme(color_scheme_seed="#AFAFAF")
+
+    def _mount_dashboard(self, page: ft.Page) -> None:
+        page.clean()
         self.content.content = self._dashboard()
         page.add(
             ft.Row(
@@ -1487,16 +1571,81 @@ class SenaFletUI:
                 spacing=0,
             )
         )
-        page.run_task(self._log_pump)
         print(
             f"[SENA UI] Browser connected; dashboard ready "
             f"mode={'web' if self.device.is_android else 'desktop'} "
             f"layout={'compact' if self._compact else 'desktop'}"
         )
 
+    def _mount_login(self, page: ft.Page) -> None:
+        page.clean()
+        pin = ft.TextField(
+            label="PIN dashboard",
+            password=True,
+            can_reveal_password=True,
+            autofocus=True,
+            width=320,
+        )
+        status = ft.Text("", color=ERROR, size=11)
+
+        async def submit(e: Any) -> None:
+            del e
+            if hmac.compare_digest(str(pin.value or ""), WEB_PIN):
+                pin.value = ""
+                self._mount_dashboard(page)
+                page.update()
+                return
+            pin.value = ""
+            status.value = "PIN salah."
+            page.update()
+
+        pin.on_submit = submit
+        page.add(
+            ft.Container(
+                expand=True,
+                alignment=ft.Alignment.CENTER,
+                content=self._panel(
+                    ft.Column(
+                        controls=[
+                            ft.Icon(ft.Icons.LOCK_OUTLINE, size=38, color=TEXT),
+                            ft.Text("Senna Control Center", size=24, color=TEXT),
+                            ft.Text("Masukkan PIN untuk membuka dashboard.", color=MUTED),
+                            pin,
+                            ft.Button("Masuk", icon=ft.Icons.LOGIN, on_click=submit),
+                            status,
+                        ],
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        tight=True,
+                        spacing=12,
+                    ),
+                    padding=28,
+                ),
+            )
+        )
+
+    async def _logout(self, e: Any) -> None:
+        del e
+        if self.page is not None and WEB_PIN:
+            self._mount_login(self.page)
+            self.page.update()
+
+    async def main(self, page: ft.Page) -> None:
+        self.page = page
+        self._compact = bool((page.width or 1200) < 820)
+        self._configure_page(page)
+        if self.device.is_android and WEB_PIN:
+            self._mount_login(page)
+        else:
+            self._mount_dashboard(page)
+        page.run_task(self._log_pump)
+
     async def run(self) -> None:
         view = ft.AppView.WEB_BROWSER if self.device.is_android else ft.AppView.FLET_APP
         if self.device.is_android:
+            if WEB_HOST.casefold() not in _LOOPBACK_HOSTS and not WEB_PIN:
+                raise RuntimeError(
+                    "SENA_WEB_PIN wajib diisi ketika SENA_WEB_HOST membuka akses LAN."
+                )
             print(f"[SENA UI] Starting web server host={WEB_HOST} port={WEB_PORT}")
             print(f"[SENA UI] Open on this phone: http://127.0.0.1:{WEB_PORT}")
             print(f"[SENA UI] Open from laptop: http://<PHONE-LAN-IP>:{WEB_PORT}")

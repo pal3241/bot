@@ -23,5 +23,12 @@ def test_music_volume_fallback() -> None:
     assert actions[0].arguments == {"percent": 30}
 
 
-def test_scheduled_music_does_not_play_immediately() -> None:
-    assert infer_safe_actions_from_text("20 detik lagi putar Yoasobi Idol") == ()
+def test_scheduled_music_uses_scheduler_instead_of_immediate_play() -> None:
+    actions = infer_safe_actions_from_text("20 detik lagi putar Yoasobi Idol")
+    assert len(actions) == 1
+    assert actions[0].tool == "schedule.create"
+    assert actions[0].arguments == {
+        "job_type": "music.play",
+        "job_arguments": {"query": "Yoasobi Idol"},
+        "delay_seconds": 20,
+    }

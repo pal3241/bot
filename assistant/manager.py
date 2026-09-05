@@ -184,15 +184,17 @@ class AssistantManager:
     def __init__(
         self,
         personality: PersonalityManager,
-        audience_personality: AudiencePersonalityManager,
         sessions: SessionManager,
         llm: LLMManager,
         settings: AISettings,
         owner_resolver: OwnerResolver,
         memory: MemoryManager,
+        audience_personality: AudiencePersonalityManager | None = None,
     ) -> None:
         self.personality = personality
-        self.audience_personality = audience_personality
+        self.audience_personality = audience_personality or AudiencePersonalityManager(
+            SENA_AUDIENCE_PERSONALITY_FILE
+        )
         self.sessions = sessions
         self._llm = llm
         self.settings = settings
@@ -539,20 +541,22 @@ def build_assistant_manager() -> AssistantManager:
         "SENA_MEMORY_CONTEXT_MAX_CHARS", 1000 if device.is_android else 2500
     )
     return AssistantManager(
-        PersonalityManager(SENA_PERSONALITY_FILE),
-        AudiencePersonalityManager(SENA_AUDIENCE_PERSONALITY_FILE),
-        SessionManager(
+        personality=PersonalityManager(SENA_PERSONALITY_FILE),
+        sessions=SessionManager(
             settings.chat_timeout_seconds,
             settings.history_max_messages,
         ),
-        build_llm_manager(settings),
-        settings,
-        OwnerResolver(owner_id),
-        MemoryManager(
+        llm=build_llm_manager(settings),
+        settings=settings,
+        owner_resolver=OwnerResolver(owner_id),
+        memory=MemoryManager(
             MemoryStore(Path("data/sena_memory.db")),
             MemoryPolicy(0.55, 0.70, 500),
             memory_limit,
             memory_chars,
+        ),
+        audience_personality=AudiencePersonalityManager(
+            SENA_AUDIENCE_PERSONALITY_FILE
         ),
     )
 

@@ -99,6 +99,22 @@ Ketik nomor menu untuk memilih fitur. Ketik `exit` untuk kembali atau menutup pr
 
 Menu **AI Settings** berada pada nomor 4. Pengaturan provider, model, token, timeout, retry, session, history, bahasa, dan NVIDIA NIM URL dapat diubah saat bot berjalan. Nilainya disimpan otomatis ke `data/ai_settings.json`; API key tetap hanya dibaca dari `.env` dan tidak pernah disimpan di file pengaturan.
 
+### Keamanan Control Center
+
+Web UI hanya bind ke `127.0.0.1` secara default. Jika dashboard perlu dibuka
+dari laptop atau device lain di LAN, isi host dan PIN di `.env`:
+
+```env
+SENA_WEB_HOST=0.0.0.0
+SENA_WEB_PORT=8550
+SENA_WEB_PIN=ubah-dengan-pin-yang-kuat
+```
+
+Senna menolak membuka Web UI ke LAN jika `SENA_WEB_PIN` kosong. Tombol logout,
+reset chat session, restart, dan shutdown tersedia di tab **Settings**. Reset
+session hanya membersihkan history jangka pendek serta status aktif/diam; memory
+jangka panjang, personality, jadwal, dan konfigurasi tidak ikut dihapus.
+
 ## Prompt prefill dan model routing
 
 Sena membagi request AI menjadi tiga tier secara deterministik:
@@ -143,11 +159,14 @@ mengembalikan metrik tersebut.
 
 ## Emoji Manager
 
-Atur lokasi GIF dalam `config.py`:
+Atur lokasi GIF melalui `.env`:
 
-```python
-GIF_FOLDER: Path = Path(r"D:\Discord GIF")
+```env
+SENA_GIF_FOLDER=D:\Discord GIF
 ```
+
+Jika dikosongkan, Senna memilih default sesuai platform: `D:\import` pada
+Windows, `~/storage/downloads` pada Termux, dan `~/Downloads` pada Linux/macOS.
 
 Alur upload:
 

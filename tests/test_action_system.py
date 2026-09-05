@@ -14,9 +14,18 @@ class ActionParserTests(unittest.TestCase):
         self.assertEqual(parse_action_response('{"text":"x","actions":"voice.join_user"}'), ())
 
     def test_action_count_is_bounded(self) -> None:
-        items = ",".join('{"tool":"voice.leave","arguments":{}}' for _ in range(10))
+        items = ",".join(
+            '{"tool":"test.action.' + str(index) + '","arguments":{}}'
+            for index in range(10)
+        )
         actions = parse_action_response('{"text":"x","actions":[' + items + ']}')
         self.assertEqual(len(actions), MAX_ACTIONS_PER_RESPONSE)
+
+    def test_duplicate_actions_are_collapsed(self) -> None:
+        raw = '{"text":"x","actions":[' + ",".join(
+            ['{"tool":"voice.leave","arguments":{}}'] * 4
+        ) + "]}"
+        self.assertEqual(len(parse_action_response(raw)), 1)
 
 
 class ActionModelTests(unittest.TestCase):
