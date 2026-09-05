@@ -19,8 +19,8 @@ class ModelTarget:
     def __post_init__(self) -> None:
         provider = self.provider_name.strip().casefold()
         model = self.model.strip()
-        if provider not in {"openrouter", "nvidia_nim"}:
-            raise ValueError(f"Provider route tidak didukung: {provider or '-'}")
+        if not provider:
+            raise ValueError("Provider route tidak boleh kosong.")
         if not model:
             raise ValueError("Model route tidak boleh kosong.")
         object.__setattr__(self, "provider_name", provider)
