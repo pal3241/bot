@@ -159,6 +159,21 @@ Log `[SENA ROUTER]` menunjukkan tier, model yang dipilih, dan perpindahan
 fallback. Log `[SENA CACHE]` menunjukkan token cache OpenRouter jika provider
 mengembalikan metrik tersebut.
 
+Semua konfigurasi routing juga tersedia di **AI Setting > Model Routing**:
+
+- enable/disable tiered routing;
+- provider dan model FAST;
+- provider dan model STANDARD;
+- provider dan model COMPLEX;
+- provider dan model fallback;
+- JSON assistant prefill;
+- prompt cache;
+- reset ke routing default.
+
+Pilihan **Ikuti Primary** memakai provider dan model utama. Nilai yang diterapkan
+dari UI disimpan ke `data/ai_settings.json` dan langsung aktif tanpa restart.
+File konfigurasi lama dimigrasikan otomatis dengan default routing yang aman.
+
 ## Emoji Manager
 
 Atur lokasi GIF melalui `.env`:

@@ -1,9 +1,12 @@
 import unittest
+from unittest.mock import patch
 
 from assistant.llm.base import ChatMessage, LLMProvider, LLMProviderError
 from assistant.llm.manager import LLMManager
 from assistant.llm.providers.nvidia_nim import NvidiaNimProvider
 from assistant.llm.routing import ModelTarget, RoutingTier, choose_routing_tier
+from assistant.manager import build_llm_manager
+from assistant.settings import AISettings
 
 
 class FakeProvider(LLMProvider):
@@ -160,6 +163,56 @@ class NvidiaKimiConfigurationTests(unittest.TestCase):
         self.assertEqual(body["max_tokens"], 4096)
         self.assertEqual(body["response_format"], {"type": "json_object"})
         self.assertNotIn("chat_template_kwargs", body)
+
+
+class PersistedRoutingConfigurationTests(unittest.TestCase):
+    def test_build_manager_uses_settings_instead_of_environment(self) -> None:
+        configured = AISettings(
+            provider_name="openrouter",
+            openrouter_model="primary-model",
+            nvidia_nim_model="nim-default",
+            nvidia_nim_base_url="https://example.com/v1",
+            max_tokens=300,
+            request_timeout_seconds=60.0,
+            retry_count=2,
+            retry_delay_seconds=1.0,
+            chat_timeout_seconds=120.0,
+            history_max_messages=20,
+            fast_provider="openrouter",
+            fast_model="fast-model",
+            standard_provider="primary",
+            standard_model="",
+            complex_provider="nvidia_nim",
+            complex_model="moonshotai/kimi-k3",
+            fallback_provider="openrouter",
+            fallback_model="fallback-model",
+            json_prefill_enabled=False,
+            prompt_cache_enabled=False,
+        )
+        providers = {
+            "openrouter": FakeProvider(),
+            "nvidia_nim": FakeProvider(),
+        }
+        with patch(
+            "assistant.manager.create_provider",
+            side_effect=lambda name, **kwargs: providers[name],
+        ):
+            manager = build_llm_manager(configured)
+
+        self.assertEqual(
+            manager._routes[RoutingTier.FAST],
+            ModelTarget("openrouter", "fast-model"),
+        )
+        self.assertEqual(
+            manager._routes[RoutingTier.STANDARD],
+            ModelTarget("openrouter", "primary-model"),
+        )
+        self.assertEqual(
+            manager._routes[RoutingTier.COMPLEX],
+            ModelTarget("nvidia_nim", "moonshotai/kimi-k3"),
+        )
+        self.assertFalse(manager._json_prefill_enabled)
+        self.assertFalse(manager._prompt_cache_enabled)
 
 
 if __name__ == "__main__":

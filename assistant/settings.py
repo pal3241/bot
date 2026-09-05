@@ -15,6 +15,17 @@ class AISettings:
     retry_delay_seconds: float
     chat_timeout_seconds: float
     history_max_messages: int
+    routing_enabled: bool = True
+    fast_provider: str = "primary"
+    fast_model: str = ""
+    standard_provider: str = "primary"
+    standard_model: str = ""
+    complex_provider: str = "nvidia_nim"
+    complex_model: str = "moonshotai/kimi-k3"
+    fallback_provider: str = "openrouter"
+    fallback_model: str = "openai/gpt-4o-mini"
+    json_prefill_enabled: bool = True
+    prompt_cache_enabled: bool = True
 
 
 def validate_settings(settings: AISettings) -> AISettings:
@@ -38,6 +49,20 @@ def validate_settings(settings: AISettings) -> AISettings:
         raise ValueError("Session timeout harus lebih besar dari nol.")
     if settings.history_max_messages <= 0:
         raise ValueError("Batas history harus lebih besar dari nol.")
+    route_fields = (
+        ("FAST", settings.fast_provider, settings.fast_model),
+        ("STANDARD", settings.standard_provider, settings.standard_model),
+        ("COMPLEX", settings.complex_provider, settings.complex_model),
+        ("FALLBACK", settings.fallback_provider, settings.fallback_model),
+    )
+    allowed_route_providers = {"primary", "openrouter", "nvidia_nim"}
+    for label, provider, model in route_fields:
+        if provider not in allowed_route_providers:
+            raise ValueError(
+                f"Provider route {label} harus primary, openrouter, atau nvidia_nim."
+            )
+        if provider != "primary" and not model.strip():
+            raise ValueError(f"Model route {label} tidak boleh kosong.")
     return settings
 
 
@@ -68,6 +93,53 @@ def load_settings(path: Path, initial: AISettings) -> AISettings:
             retry_delay_seconds=_number(parsed, "retry_delay_seconds", path),
             chat_timeout_seconds=_number(parsed, "chat_timeout_seconds", path),
             history_max_messages=_integer(parsed, "history_max_messages", path),
+            routing_enabled=_boolean_or(
+                parsed, "routing_enabled", initial.routing_enabled, path
+            ),
+            fast_provider=_string_or(
+                parsed, "fast_provider", initial.fast_provider, path
+            ),
+            fast_model=_string_or(
+                parsed, "fast_model", initial.fast_model, path, allow_empty=True
+            ),
+            standard_provider=_string_or(
+                parsed, "standard_provider", initial.standard_provider, path
+            ),
+            standard_model=_string_or(
+                parsed,
+                "standard_model",
+                initial.standard_model,
+                path,
+                allow_empty=True,
+            ),
+            complex_provider=_string_or(
+                parsed, "complex_provider", initial.complex_provider, path
+            ),
+            complex_model=_string_or(
+                parsed, "complex_model", initial.complex_model, path, allow_empty=True
+            ),
+            fallback_provider=_string_or(
+                parsed, "fallback_provider", initial.fallback_provider, path
+            ),
+            fallback_model=_string_or(
+                parsed,
+                "fallback_model",
+                initial.fallback_model,
+                path,
+                allow_empty=True,
+            ),
+            json_prefill_enabled=_boolean_or(
+                parsed,
+                "json_prefill_enabled",
+                initial.json_prefill_enabled,
+                path,
+            ),
+            prompt_cache_enabled=_boolean_or(
+                parsed,
+                "prompt_cache_enabled",
+                initial.prompt_cache_enabled,
+                path,
+            ),
         )
     )
 
@@ -104,3 +176,35 @@ def _number(data: dict[str, object], field: str, path: Path) -> float:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         raise ValueError(f"Field '{field}' harus berupa angka: {path.resolve()}")
     return float(value)
+
+
+def _string_or(
+    data: dict[str, object],
+    field: str,
+    fallback: str,
+    path: Path,
+    *,
+    allow_empty: bool = False,
+) -> str:
+    if field not in data:
+        return fallback
+    value = data[field]
+    if not isinstance(value, str):
+        raise ValueError(f"Field '{field}' harus berupa string: {path.resolve()}")
+    clean = value.strip()
+    if not clean and not allow_empty:
+        raise ValueError(
+            f"Field '{field}' harus berupa string tidak kosong: {path.resolve()}"
+        )
+    return clean
+
+
+def _boolean_or(
+    data: dict[str, object], field: str, fallback: bool, path: Path
+) -> bool:
+    if field not in data:
+        return fallback
+    value = data[field]
+    if not isinstance(value, bool):
+        raise ValueError(f"Field '{field}' harus berupa boolean: {path.resolve()}")
+    return value
