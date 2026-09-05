@@ -1216,9 +1216,9 @@ class SenaFletUI:
         settings = manager.settings if manager else None
         self.ai_provider = ft.Dropdown(
             label="Provider",
-            value=settings.provider_name if settings else "nvidia_nim",
+            value=settings.provider_name if settings else "openrouter",
             options=self._options(
-                [("nvidia_nim", "NVIDIA NIM"), ("openrouter", "OpenRouter")]
+                [("openrouter", "OpenRouter"), ("nvidia_nim", "NVIDIA NIM")]
             ),
         )
         self.ai_nvidia = ft.TextField(
@@ -1406,7 +1406,8 @@ class SenaFletUI:
                             ),
                             ft.Text(
                                 "FAST untuk respons ringan, STANDARD untuk chat normal, "
-                                "COMPLEX untuk coding/analisis, lalu fallback jika route gagal.",
+                                "COMPLEX untuk coding/analisis. FAST/ STANDARD memakai "
+                                "fallback ringan agar tidak nyasar ke NVIDIA/Kimi yang lambat.",
                                 color=MUTED,
                                 size=11,
                             ),
