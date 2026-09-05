@@ -36,6 +36,7 @@ from core.runtime_status import RuntimeStatus
 from stt.settings import load_configured_settings, save_settings as save_stt_settings
 from voice.converters.registry import CONVERTERS
 from voice.converters.settings import VoiceConverterSettings
+from voice.manager import VoiceManager
 from voice.registry import PROVIDERS
 from voice.settings_store import VoicePreferences, load_preferences, save_preferences
 
@@ -124,6 +125,7 @@ class SenaFletUI:
         self.voice_channel = ft.Dropdown(label="Voice Channel", expand=True)
         self.voice_status = ft.Text("Voice idle", color=MUTED)
         self.voice_save_status = ft.Text("", color=MUTED, size=11)
+        self.tts_test_status = ft.Text("", color=MUTED, size=11, selectable=True)
 
         self.ai_status = ft.Text("", color=MUTED, size=11)
         self.personality_status = ft.Text("", color=MUTED, size=11)
@@ -883,6 +885,86 @@ class SenaFletUI:
         if self.page:
             self.page.update()
 
+    def _voice_manager_from_form(self) -> VoiceManager:
+        language = (self.tts_language.value or "").strip().lower()
+        if not language:
+            raise ValueError("Bahasa TTS tidak boleh kosong.")
+        return VoiceManager(
+            provider_name=str(self.tts_provider.value or "gtts"),
+            language=language,
+            converter_settings=VoiceConverterSettings(
+                enabled=bool(self.converter_enabled.value),
+                converter=str(self.converter_name.value or "passthrough"),
+                model=(self.converter_model.value or "").strip() or None,
+                pitch=int(self.converter_pitch.value or "0"),
+                index_ratio=float(self.converter_index.value or "0"),
+                protect=float(self.converter_protect.value or "0"),
+            ),
+            settings_file=VOICE_SETTINGS_FILE,
+        )
+
+    async def _generate_test_tts(self, e: Any) -> None:
+        del e
+        manager: VoiceManager | None = None
+        try:
+            text = (self.tts_test_text.value or "").strip()
+            if not text:
+                raise ValueError("Masukkan teks test TTS.")
+            self.tts_test_status.value = "Generating MP3..."
+            self.tts_test_status.color = WARNING
+            if self.page:
+                self.page.update()
+            manager = self._voice_manager_from_form()
+            output = await manager.generate_test(text)
+            self.tts_test_status.value = f"TTS READY · MP3: {output.resolve()}"
+            self.tts_test_status.color = SUCCESS
+        except Exception as error:
+            self.tts_test_status.value = (
+                f"TTS gagal · {type(error).__name__}: {error}"
+            )
+            self.tts_test_status.color = ERROR
+            print(f"[SENA UI TTS] generate failed: {type(error).__name__}: {error}")
+        finally:
+            if manager is not None:
+                await manager.close()
+        if self.page:
+            self.page.update()
+
+    async def _speak_tts_in_vc(self, e: Any) -> None:
+        del e
+        manager: VoiceManager | None = None
+        try:
+            text = (self.tts_test_text.value or "").strip()
+            if not text:
+                raise ValueError("Masukkan teks yang akan diucapkan.")
+            guild = (
+                self.ctx.client.get_guild(int(self.voice_guild.value))
+                if self.voice_guild.value
+                else None
+            )
+            voice_client = guild.voice_client if guild else None
+            if voice_client is None or not voice_client.is_connected():
+                raise RuntimeError("Bot belum terhubung ke VC. Tekan Join dulu.")
+            self.tts_test_status.value = "Generating dan mengirim audio ke VC..."
+            self.tts_test_status.color = WARNING
+            if self.page:
+                self.page.update()
+            manager = self._voice_manager_from_form()
+            await manager.speak(voice_client, text)
+            self.tts_test_status.value = "VOICE TX READY · audio selesai diputar."
+            self.tts_test_status.color = SUCCESS
+        except Exception as error:
+            self.tts_test_status.value = (
+                f"Speak gagal · {type(error).__name__}: {error}"
+            )
+            self.tts_test_status.color = ERROR
+            print(f"[SENA UI TTS] speak failed: {type(error).__name__}: {error}")
+        finally:
+            if manager is not None:
+                await manager.close()
+        if self.page:
+            self.page.update()
+
     def _voice(self) -> ft.Control:
         self.voice_guild.options = self._guild_options()
         if self.voice_guild.value is None and self.ctx.client.guilds:
@@ -908,6 +990,14 @@ class SenaFletUI:
         )
         self.tts_language = ft.TextField(
             label="TTS Language", value=prefs.language, border_color=BORDER
+        )
+        self.tts_test_text = ft.TextField(
+            label="Teks Generate/Test",
+            value="Halo, ini adalah tes suara Sena.",
+            multiline=True,
+            min_lines=2,
+            max_lines=4,
+            border_color=BORDER,
         )
         self.converter_enabled = ft.Switch(
             label="Enable voice converter", value=prefs.converter.enabled
@@ -1040,6 +1130,23 @@ class SenaFletUI:
                                     ft.Container(col={"xs": 12, "md": 6}, content=self.tts_language),
                                 ]
                             ),
+                            self.tts_test_text,
+                            ft.Row(
+                                wrap=True,
+                                controls=[
+                                    ft.Button(
+                                        "Generate/Test TTS",
+                                        icon=ft.Icons.AUDIO_FILE_OUTLINED,
+                                        on_click=self._generate_test_tts,
+                                    ),
+                                    ft.Button(
+                                        "Speak in VC",
+                                        icon=ft.Icons.RECORD_VOICE_OVER_OUTLINED,
+                                        on_click=self._speak_tts_in_vc,
+                                    ),
+                                ],
+                            ),
+                            self.tts_test_status,
                             ft.Divider(color=BORDER),
                             ft.Text("Voice Converter", color=TEXT, weight=ft.FontWeight.W_600),
                             self.converter_enabled,
