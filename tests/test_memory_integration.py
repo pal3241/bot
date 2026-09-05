@@ -100,7 +100,7 @@ class MemoryIntegrationTests(unittest.IsolatedAsyncioTestCase):
             owner_prompt: str = "\n".join(
                 message.content for message in second_provider.calls[0]
             )
-            self.assertIn("[RELATIONSHIP]", owner_prompt)
+            self.assertIn("[OWNER RELATIONSHIP - HIGH PRIORITY]", owner_prompt)
             self.assertIn("gue lebih suka Python", owner_prompt)
 
             await second.chat(

@@ -1,7 +1,9 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from music.manager import MusicManager, MusicReadiness
 from music.models import MusicTrack
 from music.resolver import _looks_like_url
 from music.settings import MusicSettings, load_music_settings, save_music_settings
@@ -45,6 +47,36 @@ class MusicSettingsTests(unittest.TestCase):
             self.assertEqual(saved.max_playlist_items, 100)
             loaded = load_music_settings(path)
             self.assertEqual(loaded, saved)
+
+
+class MusicReadinessTests(unittest.TestCase):
+    def test_ready_requires_resolver_ffmpeg_and_voice(self) -> None:
+        manager = object.__new__(MusicManager)
+        manager._closed = False
+        with patch.object(
+            MusicManager,
+            "_backend_checks",
+            return_value={"resolver": True, "ffmpeg": True, "voice": True},
+        ):
+            self.assertIs(manager.readiness, MusicReadiness.READY)
+            self.assertTrue(manager.available)
+
+    def test_partial_backend_is_degraded_and_not_available(self) -> None:
+        manager = object.__new__(MusicManager)
+        manager._closed = False
+        with patch.object(
+            MusicManager,
+            "_backend_checks",
+            return_value={"resolver": True, "ffmpeg": False, "voice": False},
+        ):
+            self.assertIs(manager.readiness, MusicReadiness.DEGRADED)
+            self.assertFalse(manager.available)
+
+    def test_closed_manager_is_unavailable(self) -> None:
+        manager = object.__new__(MusicManager)
+        manager._closed = True
+        self.assertIs(manager.readiness, MusicReadiness.UNAVAILABLE)
+        self.assertFalse(manager.available)
 
 
 if __name__ == "__main__":

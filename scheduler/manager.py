@@ -257,6 +257,10 @@ class SchedulerManager:
             ),
         )
 
+    async def _send_schedule(self, item: ScheduledJob) -> None:
+        """Backward-compatible name used by older callers and tests."""
+        await self._send_discord_message_job(item)
+
     async def _execute_due(self, item: ScheduledJob, now: datetime) -> None:
         try:
             await self.registry.execute(item)

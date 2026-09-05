@@ -76,6 +76,31 @@ class SharedSessionTests(unittest.TestCase):
         self.assertIn("[User1 | id=100]", history)
         self.assertIn("[User2 | id=200]", history)
 
+    def test_clear_channel_only_removes_matching_sessions(self) -> None:
+        sessions = SessionManager(120.0, 24)
+        selected = ConversationKey("discord_text", 1, 10, None)
+        other = ConversationKey("discord_text", 1, 11, None)
+        sessions.activate(selected)
+        sessions.activate(other)
+
+        removed = sessions.clear_channel(
+            source="discord_text", guild_id=1, channel_id=10
+        )
+
+        self.assertEqual(removed, 1)
+        self.assertIsNone(sessions.peek(selected))
+        self.assertIsNotNone(sessions.peek(other))
+
+    def test_clear_returns_removed_count_and_wipes_history(self) -> None:
+        sessions = SessionManager(120.0, 24)
+        key = ConversationKey("discord_text", 1, 10, None)
+        session = sessions.activate(key)
+        sessions.add_history(session, [entry(1, "Satu", "halo")])
+
+        self.assertEqual(sessions.clear(), 1)
+        self.assertEqual(session.history, [])
+        self.assertIsNone(sessions.peek(key))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -83,5 +83,28 @@ class SessionManager:
         if len(session.history) > self._history_max_messages:
             del session.history[: -self._history_max_messages]
 
-    def clear(self) -> None:
+    def clear_channel(
+        self,
+        *,
+        source: str,
+        guild_id: int | None,
+        channel_id: int,
+    ) -> int:
+        keys = [
+            key
+            for key in self._sessions
+            if key.source == source
+            and key.guild_id == guild_id
+            and key.channel_id == channel_id
+        ]
+        for key in keys:
+            self._sessions[key].history.clear()
+            del self._sessions[key]
+        return len(keys)
+
+    def clear(self) -> int:
+        count = len(self._sessions)
+        for session in self._sessions.values():
+            session.history.clear()
         self._sessions.clear()
+        return count

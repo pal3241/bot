@@ -1,7 +1,20 @@
+import os
 from pathlib import Path
 
 
-GIF_FOLDER: Path = Path(r"D:\import")
+def _default_gif_folder() -> Path:
+    configured = os.getenv("SENA_GIF_FOLDER", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    if os.getenv("ANDROID_ROOT") or os.getenv("TERMUX_VERSION"):
+        downloads = Path.home() / "storage" / "downloads"
+        return downloads if downloads.exists() else Path.home() / "bot" / "assets" / "import"
+    if os.name == "nt":
+        return Path(r"D:\import")
+    return Path.home() / "Downloads"
+
+
+GIF_FOLDER: Path = _default_gif_folder()
 MAX_EMOJI_SIZE: int = 256 * 1024
 TTS_PROVIDER: str = "gtts"
 TTS_LANGUAGE: str = "id"

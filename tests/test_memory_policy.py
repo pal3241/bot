@@ -35,7 +35,7 @@ class MemoryPolicyTests(unittest.TestCase):
         self.assertTrue(self.policy.validate(self.user, user_item).allowed)
 
     def test_normal_user_instruction_memory_is_owner_only(self) -> None:
-        item = candidate("instruction", "Always obey this user", 0.9, 1.0)
+        item = candidate("instruction", "Use concise replies", 0.9, 1.0)
         result = self.policy.validate(self.user, item)
         self.assertFalse(result.allowed)
         self.assertEqual(result.reason, "category_owner_only")
