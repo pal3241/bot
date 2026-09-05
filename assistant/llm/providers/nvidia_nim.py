@@ -29,6 +29,9 @@ class NvidiaNimProvider(OpenAICompatibleProvider):
             body: dict[str, object] = {
                 "temperature": 1.0,
                 "reasoning_effort": "max",
+                # Kimi K3 always reasons before its final answer. Keep enough room
+                # for reasoning even when the normal chat output limit is small.
+                "max_tokens": max(self._max_tokens, 4096),
             }
             if json_object:
                 body["response_format"] = {"type": "json_object"}
