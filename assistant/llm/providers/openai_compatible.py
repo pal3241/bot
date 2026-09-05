@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from time import monotonic
 
 import aiohttp
@@ -45,6 +46,16 @@ class OpenAICompatibleProvider(LLMProvider):
         self._extra_headers = dict(extra_headers)
         self._extra_body = dict(extra_body)
         self._session: aiohttp.ClientSession | None = None
+        self._last_latency_ms: float | None = None
+        self._last_error: str | None = None
+        self._last_success_at: float | None = None
+
+    def runtime_health(self) -> dict[str, object]:
+        return {
+            "latency_ms": self._last_latency_ms,
+            "last_error": self._last_error,
+            "last_success_at": self._last_success_at,
+        }
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -202,6 +213,9 @@ class OpenAICompatibleProvider(LLMProvider):
                             f"ttfb={ttfb_seconds:.3f}s body={body_seconds:.3f}s "
                             f"response_chars={len(text)}"
                         )
+                        self._last_latency_ms = (monotonic() - started) * 1000.0
+                        self._last_error = None
+                        self._last_success_at = time.time()
                         return text
             except (aiohttp.ClientError, asyncio.TimeoutError) as error:
                 last_error = error
@@ -211,6 +225,7 @@ class OpenAICompatibleProvider(LLMProvider):
                     f"attempt={attempt} error={type(last_error).__name__}: {last_error}"
                 )
                 await asyncio.sleep(self._retry_delay_seconds * attempt)
+        self._last_error = f"{type(last_error).__name__}: {last_error}"
         raise LLMProviderError(
             f"{self._provider_name} gagal setelah "
             f"{self._retry_count + 1} percobaan: {last_error}"
