@@ -3,6 +3,7 @@ from pathlib import Path
 import discord
 
 from expression.enums import AssetType
+from expression.gif_search import InternetGifResult, TenorGifSearch
 from expression.models import (
     DEFAULT_EXPRESSION,
     ExpressionAsset,
@@ -39,9 +40,12 @@ class DiscordExpressionSender:
         self,
         client: discord.Client,
         resolver: ExpressionResolver,
+        *,
+        gif_search: TenorGifSearch | None = None,
     ) -> None:
         self._client: discord.Client = client
         self._resolver: ExpressionResolver = resolver
+        self._gif_search = gif_search
 
     def refresh_runtime_emojis(self) -> None:
         runtime: list[RuntimeEmoji] = [
@@ -86,6 +90,47 @@ class DiscordExpressionSender:
         self._resolver.record_primary_success(context, sent_primary)
         if bonus is not None:
             await self._send_bonus(message, bonus, context)
+        elif self._online_gif_eligible(expression, context):
+            await self._send_online_gif(message, expression, context)
+
+    def _online_gif_eligible(
+        self,
+        request: ExpressionRequest,
+        context: ExpressionContext,
+    ) -> bool:
+        provider = self._gif_search
+        if provider is None or not provider.enabled:
+            return False
+        # Local/manual GIF catalog always has priority. Internet search is the fallback
+        # when Sena has no local GIF assets to choose from.
+        if self._resolver.catalog.gifs:
+            return False
+        if not request.allow_bonus:
+            return False
+        media = self._resolver._select_bonus_type(request)
+        if media is not AssetType.GIF:
+            return False
+        policy = self._resolver.catalog.policy
+        if request.intensity < policy.gif_min_intensity:
+            return False
+        if not self._resolver._bonus_intent_allowed(request, AssetType.GIF):
+            return False
+
+        now = self._resolver._clock()
+        usage = self._resolver.history.get(context.conversation_key, now)
+        recent_responses = list(usage.response_times)
+        if len(recent_responses) >= 2 and now - recent_responses[-2] <= 20.0:
+            return False
+        last_channel = self._resolver.history.last_channel_bonus(
+            context.channel_id, AssetType.GIF.value
+        )
+        if (
+            last_channel is not None
+            and now - last_channel < policy.gif_channel_cooldown_seconds
+        ):
+            return False
+        chance = self._resolver._bonus_chance(request, AssetType.GIF, context.is_owner)
+        return self._resolver._rng.random() < chance
 
     async def _send_main(
         self, message: discord.Message, text: str, primary: PrimaryExpression
@@ -188,3 +233,39 @@ class DiscordExpressionSender:
             self._resolver.record_failure(asset, type(error).__name__)
             return
         self._resolver.record_bonus_success(context, asset)
+
+    async def _send_online_gif(
+        self,
+        message: discord.Message,
+        request: ExpressionRequest,
+        context: ExpressionContext,
+    ) -> None:
+        provider = self._gif_search
+        if provider is None:
+            return
+        result: InternetGifResult | None = await provider.search(request)
+        if result is None:
+            return
+        try:
+            await message.channel.send(
+                result.media_url,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+        except (discord.Forbidden, discord.HTTPException) as error:
+            print(
+                f"[SENNA EXPRESSION] internet GIF send failed "
+                f"type={type(error).__name__} detail={error}"
+            )
+            return
+        now = self._resolver._clock()
+        self._resolver.history.record_bonus(
+            context.conversation_key,
+            context.channel_id,
+            result.history_key,
+            AssetType.GIF.value,
+            now,
+        )
+        print(
+            f"[SENNA EXPRESSION] internet GIF sent provider={result.provider} "
+            f"id={result.content_id} query={result.query!r}"
+        )
