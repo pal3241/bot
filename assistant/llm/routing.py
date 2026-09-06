@@ -74,8 +74,36 @@ _CODE_NOUNS = frozenset(
 _CODE_TASK_VERBS = frozenset(
     {"buat", "build", "implement", "implementasikan", "perbaiki", "refactor", "rewrite"}
 )
+_MATH_HINTS = frozenset(
+    {
+        "equation",
+        "equations",
+        "persamaan",
+        "algebra",
+        "aljabar",
+        "constant",
+        "konstanta",
+        "polynomial",
+        "polinomial",
+        "fraction",
+        "pecahan",
+        "solve",
+        "hitung",
+        "calculate",
+    }
+)
 _TRACEBACK_PATTERN = re.compile(
     r"traceback \(most recent call last\)|file \".+\", line \d+|\b(?:syntax|type|value|runtime|import)error\b",
+    re.IGNORECASE,
+)
+_MATH_RELATION_PATTERN = re.compile(r"[=≠≤≥]")
+_MATH_OPERATOR_PATTERN = re.compile(r"[+\-−*/÷^=≠≤≥]")
+_SYMBOLIC_MATH_PATTERN = re.compile(
+    r"(?:\d+[a-z]|[a-z]\d|\b[a-z]\b\s*[+\-−*/÷^=≠≤≥])",
+    re.IGNORECASE,
+)
+_MATH_IDENTITY_PATTERN = re.compile(
+    r"\b(?:true for all|for all values|all values of|identity|identitas)\b",
     re.IGNORECASE,
 )
 
@@ -124,6 +152,26 @@ def classify_routing_tier(
     if words & _CODE_NOUNS and words & _CODE_TASK_VERBS:
         score += 2
         reasons.append("code_task")
+
+    math_operator_count = len(_MATH_OPERATOR_PATTERN.findall(text))
+    symbolic_equation = bool(
+        _MATH_RELATION_PATTERN.search(text)
+        and _SYMBOLIC_MATH_PATTERN.search(text)
+        and math_operator_count >= 2
+    )
+    if symbolic_equation:
+        score += 2
+        reasons.append("symbolic_equation")
+    if symbolic_equation and math_operator_count >= 6:
+        score += 1
+        reasons.append("dense_math")
+    if words & _MATH_HINTS:
+        score += 1
+        reasons.append("math_topic")
+    if _MATH_IDENTITY_PATTERN.search(clean):
+        score += 2
+        reasons.append("math_identity")
+
     if clean.count("?") + text.count("\n") >= 3:
         score += 1
         reasons.append("multi_part")
