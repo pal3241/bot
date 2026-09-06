@@ -14,10 +14,12 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         updated_at TEXT NOT NULL,
         last_accessed_at TEXT,
         access_count INTEGER NOT NULL DEFAULT 0,
-        active INTEGER NOT NULL DEFAULT 1
+        active INTEGER NOT NULL DEFAULT 1,
+        pinned INTEGER NOT NULL DEFAULT 0
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_memories_owner_active ON memories(owner_id, active)",
     "CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category)",
     "CREATE INDEX IF NOT EXISTS idx_memories_visibility ON memories(visibility)",
+    "CREATE INDEX IF NOT EXISTS idx_memories_owner_pinned ON memories(owner_id, pinned, active)",
 )
