@@ -25,8 +25,8 @@ class RuntimeRoutingPolicyTests(unittest.TestCase):
             nvidia_nim_base_url="https://example.test/v1",
             max_tokens=400,
             request_timeout_seconds=60.0,
-            retry_count=0,
-            retry_delay_seconds=0.0,
+            retry_count=2,
+            retry_delay_seconds=1.0,
             chat_timeout_seconds=120.0,
             history_max_messages=20,
             routing_enabled=True,
@@ -74,10 +74,39 @@ class RuntimeRoutingPolicyTests(unittest.TestCase):
         self.assertEqual(
             manager._tier_fallback_targets[RoutingTier.STANDARD],
             (
+                ModelTarget("nvidia_nim", "nvidia/fast"),
                 ModelTarget("nvidia_nim", "nvidia/fallback"),
                 ModelTarget("nvidia_nim", "nvidia/primary"),
             ),
         )
+
+    def test_complex_degrades_through_standard_and_fast(self) -> None:
+        with patch(
+            "assistant.routing_runtime_policy.create_provider",
+            return_value=_FakeProvider(),
+        ):
+            manager = build_configured_llm_manager(self._settings())
+
+        self.assertEqual(
+            manager._tier_fallback_targets[RoutingTier.COMPLEX],
+            (
+                ModelTarget("nvidia_nim", "nvidia/standard"),
+                ModelTarget("nvidia_nim", "nvidia/fast"),
+                ModelTarget("nvidia_nim", "nvidia/fallback"),
+                ModelTarget("nvidia_nim", "nvidia/primary"),
+            ),
+        )
+
+    def test_routed_nvidia_disables_same_model_retries(self) -> None:
+        with patch(
+            "assistant.routing_runtime_policy.create_provider",
+            return_value=_FakeProvider(),
+        ) as create_provider:
+            build_configured_llm_manager(self._settings())
+
+        kwargs = create_provider.call_args.kwargs
+        self.assertEqual(kwargs["name"], "nvidia_nim")
+        self.assertEqual(kwargs["retry_count"], 0)
 
 
 if __name__ == "__main__":
