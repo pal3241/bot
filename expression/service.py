@@ -71,7 +71,7 @@ class ExpressionService:
         ) -> None:
             del guild, before, after
             try:
-                self.refresh_runtime()
+                self.refresh_runtime(force=True)
             except Exception as error:
                 print(
                     f"[SENNA EXPRESSION] emoji hot-sync failed "
@@ -85,7 +85,7 @@ class ExpressionService:
         ) -> None:
             del guild, before, after
             try:
-                self.refresh_runtime()
+                self.refresh_runtime(force=True)
             except Exception as error:
                 print(
                     f"[SENNA EXPRESSION] sticker hot-sync failed "
@@ -119,6 +119,9 @@ class ExpressionService:
         )
 
     def _runtime_signature(self) -> tuple[object, ...]:
+        # Keep the signature intentionally stable. Volatile Discord properties such
+        # as Emoji.available are not part of the identity of the runtime catalog
+        # and previously caused health polling to look like an asset change.
         emoji_signature = tuple(
             sorted(
                 (
@@ -126,7 +129,6 @@ class ExpressionService:
                     str(emoji.name),
                     int(emoji.guild_id),
                     bool(emoji.animated),
-                    bool(emoji.available),
                 )
                 for emoji in self._client.emojis
             )
@@ -139,14 +141,19 @@ class ExpressionService:
                         int(sticker.id),
                         str(sticker.name),
                         int(sticker.guild_id),
-                        str(getattr(sticker, "description", "") or ""),
                     )
                 )
         return (emoji_signature, tuple(sorted(sticker_signature)))
 
     def refresh_runtime(self, *, force: bool = False) -> bool:
+        # Live health calls this method frequently. After the initial sync, normal
+        # polling is a no-op. Actual Discord asset changes use force=True from the
+        # gateway event handlers, and the UI manual-sync button also forces it.
+        if self._last_runtime_signature is not None and not force:
+            return False
+
         signature = self._runtime_signature()
-        if not force and signature == self._last_runtime_signature:
+        if force and signature == self._last_runtime_signature:
             return False
 
         runtime_catalog, stats = auto_sync_catalog(self._base_catalog, self._client)
@@ -173,6 +180,8 @@ class ExpressionService:
             )
             return False
         self._base_catalog = catalog
+        # The manual catalog changed even if the Discord runtime signature did not.
+        self._last_runtime_signature = None
         self.refresh_runtime(force=True)
         self._log_loaded(self._resolver.catalog)
         return True
