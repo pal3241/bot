@@ -8,6 +8,7 @@ from memory.normalization import lexical_similarity
 _ALWAYS_RELEVANT_OWNER_CATEGORIES: frozenset[str] = frozenset(
     {"instruction", "relationship", "preference"}
 )
+_PINNED_BONUS = 0.30
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +47,7 @@ def rank_memory(record: MemoryRecord, query: str) -> RankedMemory:
     durable_bonus: float = (
         0.12 if record.category.casefold() in _ALWAYS_RELEVANT_OWNER_CATEGORIES else 0.0
     )
+    pinned_bonus = _PINNED_BONUS if record.pinned else 0.0
     score: float = (
         0.38 * lexical
         + 0.25 * record.importance
@@ -53,6 +55,7 @@ def rank_memory(record: MemoryRecord, query: str) -> RankedMemory:
         + 0.08 * category_relevance(record.category, query)
         + 0.05 * access
         + durable_bonus
+        + pinned_bonus
     )
     return RankedMemory(record, score)
 
