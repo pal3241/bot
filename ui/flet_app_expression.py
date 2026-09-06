@@ -100,8 +100,12 @@ class SenaFletUI(_BaseSenaFletUI):
         del e
         try:
             service = self._expression_service()
-            service.refresh_runtime()
-            self.expression_test_result.value = "Discord emoji/sticker runtime berhasil di-sync ulang."
+            changed = service.refresh_runtime(force=True)
+            self.expression_test_result.value = (
+                "Discord emoji/sticker runtime berhasil di-sync ulang."
+                if changed
+                else "Runtime asset sudah sama; tidak ada perubahan."
+            )
             self.expression_test_result.color = SUCCESS
         except Exception as error:
             self.expression_test_result.value = (
@@ -121,7 +125,15 @@ class SenaFletUI(_BaseSenaFletUI):
                 raise RuntimeError("Tenor belum aktif. Isi TENOR_API_KEY di .env lalu restart Sena.")
             result = await service.gif_search.search_query(query)
             if result is None:
-                self.expression_test_result.value = "Tenor tidak mengembalikan GIF yang dapat dipakai."
+                diagnostic = getattr(
+                    service.gif_search,
+                    "last_diagnostic",
+                    "tidak ada detail diagnostik",
+                )
+                self.expression_test_result.value = (
+                    "Tenor tidak mengembalikan GIF yang dapat dipakai.\n"
+                    f"Diagnostic: {diagnostic}"
+                )
                 self.expression_test_result.color = WARNING
             else:
                 self.expression_test_result.value = (
