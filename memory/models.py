@@ -40,3 +40,4 @@ class MemoryRecord:
     last_accessed_at: str | None
     access_count: int
     active: bool
+    pinned: bool = False
