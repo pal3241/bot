@@ -1,7 +1,7 @@
 import unittest
 
 from expression.enums import BonusMedia, Emotion, ExpressionIntent
-from expression.gif_search import TenorGifSearch, expression_gif_query
+from expression.gif_search import _TENOR_SUCCESS, TenorGifSearch, expression_gif_query
 from expression.models import ExpressionRequest
 
 
@@ -52,8 +52,9 @@ class ExpressionGifSearchTests(unittest.TestCase):
         assert parsed is not None
         self.assertEqual(parsed.media_url, "https://media.tenor.example/nano.gif")
 
-    def test_http_202_is_success(self) -> None:
-        self.assertTrue(TenorGifSearch._is_success_status(202) if hasattr(TenorGifSearch, "_is_success_status") else 202 in {200, 202})
+    def test_http_200_and_202_are_success(self) -> None:
+        self.assertIn(200, _TENOR_SUCCESS)
+        self.assertIn(202, _TENOR_SUCCESS)
 
     def test_available_format_keys_are_reported(self) -> None:
         keys = TenorGifSearch._available_format_keys(
