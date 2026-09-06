@@ -150,9 +150,6 @@ class ExpressionService:
             return False
 
         signature = self._runtime_signature()
-        if force and signature == self._last_runtime_signature:
-            return False
-
         runtime_catalog, stats = auto_sync_catalog(self._base_catalog, self._client)
         self._sync_stats = stats
         self._resolver.replace_catalog(runtime_catalog)
