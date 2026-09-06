@@ -86,6 +86,14 @@ class ExpressionResolver:
         for asset in assets:
             if not self._is_available(asset, now):
                 continue
+            # Discord guild stickers are guild-bound. Never choose a sticker from a
+            # different server merely because it has a good semantic score.
+            if (
+                asset.type is AssetType.STICKER
+                and asset.guild_id is not None
+                and asset.guild_id != context.guild_id
+            ):
+                continue
             score: float = score_asset(asset, request, recent, context.is_owner)
             if asset.guild_id is not None and asset.guild_id == context.guild_id:
                 score += 0.02
@@ -149,13 +157,9 @@ class ExpressionResolver:
                     now,
                 )
             )
-        if selected is None:
-            available: list[ExpressionAsset] = [
-                asset
-                for asset in self.catalog.emojis
-                if self._is_available(asset, now)
-            ]
-            selected = available[0] if available else None
+        # Do not choose an arbitrary available custom emoji as a last resort. With
+        # auto-sync there can be dozens of unrelated assets; Unicode is safer when no
+        # semantic candidate qualifies.
         if selected is None or selected.discord_id is None:
             return PrimaryExpression(fallback, None, fallback)
         runtime: RuntimeEmoji | None = self._runtime_emojis.get(selected.discord_id)
