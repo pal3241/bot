@@ -24,7 +24,6 @@ def _decode_payload(row: aiosqlite.Row) -> tuple[str, dict[str, object]]:
         if isinstance(value, dict):
             return job_type, dict(value)
 
-    # Migration fallback for schedules written before universal jobs existed.
     payload: dict[str, object] = {"message": str(row["content"] or "")}
     mention = row["mention_user_id"]
     if mention is not None:
@@ -105,8 +104,6 @@ class ScheduleStore:
             )
             """
         )
-
-        # In-place migration for databases created by the original message-only scheduler.
         cursor = await connection.execute("PRAGMA table_info(schedules)")
         rows = await cursor.fetchall()
         await cursor.close()
@@ -168,7 +165,6 @@ class ScheduleStore:
         except (TypeError, ValueError) as error:
             raise ValueError(f"payload schedule tidak JSON-serializable: {error}") from error
 
-        # Legacy columns remain populated for compatibility with older dashboards/tools.
         message_value = payload.get("message", payload.get("content", ""))
         legacy_content = message_value if isinstance(message_value, str) else ""
         mention_value = payload.get("mention_user_id")
@@ -239,6 +235,36 @@ class ScheduleStore:
         await cursor.close()
         return [_row_to_schedule(row) for row in rows]
 
+    async def list_all(
+        self,
+        creator_id: int | None = None,
+        *,
+        limit: int = 200,
+    ) -> list[ScheduledJob]:
+        connection = self._require_connection()
+        bounded_limit = max(1, min(int(limit), 500))
+        order_sql = """
+            ORDER BY
+                active DESC,
+                CASE WHEN active = 1 THEN next_run_at END ASC,
+                COALESCE(failed_at, last_run_at, created_at) DESC,
+                id DESC
+            LIMIT ?
+        """
+        if creator_id is None:
+            cursor = await connection.execute(
+                "SELECT * FROM schedules " + order_sql,
+                (bounded_limit,),
+            )
+        else:
+            cursor = await connection.execute(
+                "SELECT * FROM schedules WHERE creator_id = ? " + order_sql,
+                (int(creator_id), bounded_limit),
+            )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [_row_to_schedule(row) for row in rows]
+
     async def due(self, now_iso: str, limit: int = 50) -> list[ScheduledJob]:
         connection = self._require_connection()
         cursor = await connection.execute(
@@ -272,6 +298,25 @@ class ScheduleStore:
             UPDATE schedules
             SET next_run_at = ?, failed_at = NULL, last_error = NULL
             WHERE id = ? AND active = 1
+            """,
+            (next_run_at, schedule_id),
+        )
+        await connection.commit()
+        changed = cursor.rowcount == 1
+        await cursor.close()
+        return changed
+
+    async def retry_failed(self, schedule_id: int, next_run_at: str) -> bool:
+        connection = self._require_connection()
+        cursor = await connection.execute(
+            """
+            UPDATE schedules
+            SET active = 1,
+                next_run_at = ?,
+                retry_count = 0,
+                last_error = NULL,
+                failed_at = NULL
+            WHERE id = ? AND active = 0 AND failed_at IS NOT NULL
             """,
             (next_run_at, schedule_id),
         )
