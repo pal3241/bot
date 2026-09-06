@@ -50,6 +50,10 @@ def build_configured_llm_manager(settings: AISettings) -> LLMManager:
     short deadlines for lightweight providers, but explicitly selected NVIDIA
     routes use the normal request timeout because the user knowingly selected a
     slower inference provider.
+
+    When tiered routing is enabled, NVIDIA uses failover-first behavior: a timed
+    out model is not retried repeatedly before the router can try another model.
+    COMPLEX degrades through STANDARD and FAST before the configured fallback.
     """
     primary = ModelTarget(
         settings.provider_name,
@@ -75,15 +79,28 @@ def build_configured_llm_manager(settings: AISettings) -> LLMManager:
     targets = (primary, fast, standard, complex_target, fallback)
     providers: dict[str, LLMProvider] = {}
     for provider_name in dict.fromkeys(target.provider_name for target in targets):
+        # NVIDIA timeouts are expensive. With routing enabled, the model chain is
+        # the retry strategy, so do not spend multiple full timeouts on the exact
+        # same model before trying a fallback candidate.
+        effective_retry_count = (
+            0
+            if settings.routing_enabled and provider_name == "nvidia_nim"
+            else settings.retry_count
+        )
         try:
             providers[provider_name] = create_provider(
                 name=provider_name,
                 nvidia_base_url=settings.nvidia_nim_base_url,
                 request_timeout_seconds=settings.request_timeout_seconds,
                 max_tokens=settings.max_tokens,
-                retry_count=settings.retry_count,
+                retry_count=effective_retry_count,
                 retry_delay_seconds=settings.retry_delay_seconds,
             )
+            if effective_retry_count != settings.retry_count:
+                print(
+                    f"[SENA ROUTER] provider={provider_name} retry_strategy=failover_first "
+                    f"same_model_retries={effective_retry_count}"
+                )
         except LLMConfigurationError as error:
             if provider_name == primary.provider_name:
                 raise
@@ -129,8 +146,8 @@ def build_configured_llm_manager(settings: AISettings) -> LLMManager:
         fallback_targets=(fallback, primary),
         tier_fallback_targets={
             RoutingTier.FAST: (fallback, primary),
-            RoutingTier.STANDARD: (fallback, primary),
-            RoutingTier.COMPLEX: (fallback, primary),
+            RoutingTier.STANDARD: (fast, fallback, primary),
+            RoutingTier.COMPLEX: (standard, fast, fallback, primary),
         },
         tier_timeout_seconds=tier_timeouts,
         json_prefill_enabled=settings.json_prefill_enabled,
