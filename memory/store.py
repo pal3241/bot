@@ -13,6 +13,7 @@ def utc_now() -> str:
 
 
 def row_to_record(row: aiosqlite.Row) -> MemoryRecord:
+    keys = set(row.keys())
     return MemoryRecord(
         id=int(row["id"]),
         owner_id=int(row["owner_id"]),
@@ -32,6 +33,7 @@ def row_to_record(row: aiosqlite.Row) -> MemoryRecord:
         ),
         access_count=int(row["access_count"]),
         active=bool(row["active"]),
+        pinned=bool(row["pinned"]) if "pinned" in keys else False,
     )
 
 
@@ -47,7 +49,18 @@ class MemoryStore:
         connection: aiosqlite.Connection = await aiosqlite.connect(self._path)
         connection.row_factory = aiosqlite.Row
         try:
-            for statement in SCHEMA_STATEMENTS:
+            # Create the base table first. Indexes that reference newly introduced
+            # columns are applied only after the in-place migration below.
+            await connection.execute(SCHEMA_STATEMENTS[0])
+            cursor = await connection.execute("PRAGMA table_info(memories)")
+            rows = await cursor.fetchall()
+            await cursor.close()
+            columns = {str(row[1]) for row in rows}
+            if "pinned" not in columns:
+                await connection.execute(
+                    "ALTER TABLE memories ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0"
+                )
+            for statement in SCHEMA_STATEMENTS[1:]:
                 await connection.execute(statement)
             await connection.commit()
         except aiosqlite.Error:
@@ -136,11 +149,30 @@ class MemoryStore:
     async def soft_delete(self, owner_id: int, memory_id: int) -> bool:
         connection: aiosqlite.Connection = self._require_connection()
         cursor: aiosqlite.Cursor = await connection.execute(
-            "UPDATE memories SET active = 0, updated_at = ? WHERE id = ? AND owner_id = ? AND active = 1",
+            """
+            UPDATE memories
+            SET active = 0, pinned = 0, updated_at = ?
+            WHERE id = ? AND owner_id = ? AND active = 1
+            """,
             (utc_now(), memory_id, owner_id),
         )
         await connection.commit()
         changed: bool = cursor.rowcount == 1
+        await cursor.close()
+        return changed
+
+    async def set_pinned(self, owner_id: int, memory_id: int, pinned: bool) -> bool:
+        connection: aiosqlite.Connection = self._require_connection()
+        cursor: aiosqlite.Cursor = await connection.execute(
+            """
+            UPDATE memories
+            SET pinned = ?, updated_at = ?
+            WHERE id = ? AND owner_id = ? AND active = 1
+            """,
+            (1 if pinned else 0, utc_now(), memory_id, owner_id),
+        )
+        await connection.commit()
+        changed = cursor.rowcount == 1
         await cursor.close()
         return changed
 
@@ -157,7 +189,11 @@ class MemoryStore:
     async def list_active(self, owner_id: int) -> list[MemoryRecord]:
         connection: aiosqlite.Connection = self._require_connection()
         cursor: aiosqlite.Cursor = await connection.execute(
-            "SELECT * FROM memories WHERE owner_id = ? AND active = 1",
+            """
+            SELECT * FROM memories
+            WHERE owner_id = ? AND active = 1
+            ORDER BY pinned DESC, updated_at DESC, id DESC
+            """,
             (owner_id,),
         )
         rows: list[aiosqlite.Row] = await cursor.fetchall()

@@ -113,6 +113,16 @@ class MemoryManager:
             return []
         return await self._store.list_active(user_id)
 
+    async def get_memory(self, user_id: int, memory_id: int) -> MemoryRecord | None:
+        if not self.available:
+            return None
+        return await self._store.get_by_id(user_id, memory_id)
+
+    async def set_pinned(self, user_id: int, memory_id: int, pinned: bool) -> bool:
+        if not self.available:
+            return False
+        return await self._store.set_pinned(user_id, memory_id, pinned)
+
     async def count_active(self, user_id: int) -> int:
         if not self.available:
             return 0
