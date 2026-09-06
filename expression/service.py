@@ -34,6 +34,7 @@ class ExpressionService:
             )
         self._base_catalog = catalog
         self._sync_stats = AutoSyncStats(0, 0, len(catalog.emojis), len(catalog.stickers))
+        self._last_runtime_signature: tuple[object, ...] | None = None
         self.gif_search = TenorGifSearch.from_env()
         history = ExpressionHistory(
             catalog.policy.recent_emoji_size,
@@ -55,7 +56,11 @@ class ExpressionService:
         self._log_loaded(catalog)
         print(
             "[SENNA EXPRESSION] internet GIF search="
-            + ("ENABLED provider=tenor" if self.gif_search.enabled else "DISABLED (TENOR_API_KEY missing or disabled)")
+            + (
+                "ENABLED provider=tenor"
+                if self.gif_search.enabled
+                else "DISABLED (TENOR_API_KEY missing or disabled)"
+            )
         )
 
     def _bind_runtime_events(self) -> None:
@@ -113,16 +118,48 @@ class ExpressionService:
             f"local_gif={len(self._resolver.catalog.gifs)} {gif_state}"
         )
 
-    def refresh_runtime(self) -> None:
+    def _runtime_signature(self) -> tuple[object, ...]:
+        emoji_signature = tuple(
+            sorted(
+                (
+                    int(emoji.id),
+                    str(emoji.name),
+                    int(emoji.guild_id),
+                    bool(emoji.animated),
+                    bool(emoji.available),
+                )
+                for emoji in self._client.emojis
+            )
+        )
+        sticker_signature: list[tuple[object, ...]] = []
+        for guild in self._client.guilds:
+            for sticker in getattr(guild, "stickers", ()):
+                sticker_signature.append(
+                    (
+                        int(sticker.id),
+                        str(sticker.name),
+                        int(sticker.guild_id),
+                        str(getattr(sticker, "description", "") or ""),
+                    )
+                )
+        return (emoji_signature, tuple(sorted(sticker_signature)))
+
+    def refresh_runtime(self, *, force: bool = False) -> bool:
+        signature = self._runtime_signature()
+        if not force and signature == self._last_runtime_signature:
+            return False
+
         runtime_catalog, stats = auto_sync_catalog(self._base_catalog, self._client)
         self._sync_stats = stats
         self._resolver.replace_catalog(runtime_catalog)
         self.sender.refresh_runtime_emojis()
+        self._last_runtime_signature = signature
         print(
             f"[SENNA EXPRESSION] auto-sync emoji+={stats.emojis_added} "
             f"sticker+={stats.stickers_added} totals="
             f"{stats.total_emojis}/{stats.total_stickers}"
         )
+        return True
 
     def reload(self) -> bool:
         try:
@@ -136,6 +173,6 @@ class ExpressionService:
             )
             return False
         self._base_catalog = catalog
-        self.refresh_runtime()
+        self.refresh_runtime(force=True)
         self._log_loaded(self._resolver.catalog)
         return True
