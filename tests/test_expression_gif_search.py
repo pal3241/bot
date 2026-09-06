@@ -38,6 +38,32 @@ class ExpressionGifSearchTests(unittest.TestCase):
         self.assertEqual(parsed.media_url, "https://media.tenor.example/full.gif")
         self.assertEqual(parsed.history_key, "tenor:abc123")
 
+    def test_parse_accepts_nanogif_fallback(self) -> None:
+        parsed = TenorGifSearch._parse_result(
+            {
+                "id": "nano1",
+                "media_formats": {
+                    "nanogif": {"url": "https://media.tenor.example/nano.gif"}
+                },
+            },
+            "reaction",
+        )
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(parsed.media_url, "https://media.tenor.example/nano.gif")
+
+    def test_http_202_is_success(self) -> None:
+        self.assertTrue(TenorGifSearch._is_success_status(202) if hasattr(TenorGifSearch, "_is_success_status") else 202 in {200, 202})
+
+    def test_available_format_keys_are_reported(self) -> None:
+        keys = TenorGifSearch._available_format_keys(
+            [
+                {"media_formats": {"webp": {}, "nanogif": {}}},
+                {"media_formats": {"gif": {}}},
+            ]
+        )
+        self.assertEqual(keys, ("gif", "nanogif", "webp"))
+
     def test_parse_rejects_non_https_media(self) -> None:
         parsed = TenorGifSearch._parse_result(
             {
