@@ -3,6 +3,7 @@ from actions.executor import ActionExecutor
 from actions.music import register_music_actions
 from actions.registry import ActionRegistry
 from actions.schedule import register_schedule_actions
+from actions.schedule_recovery import register_schedule_recovery_actions
 from music.manager import MusicManager
 from scheduler.manager import SchedulerManager
 
@@ -17,6 +18,7 @@ def build_action_executor(
         register_music_actions(registry, music)
     if scheduler is not None:
         register_schedule_actions(registry, scheduler)
+        register_schedule_recovery_actions(registry, scheduler)
     return ActionExecutor(registry)
 
 
