@@ -45,13 +45,17 @@ def score_asset(
     is_owner: bool,
 ) -> float:
     semantic_emotion: float = emotion_score(request.emotion, asset.emotion)
+    # Hard semantic gate: intent/priority must never make an unrelated emotion
+    # qualify. This becomes especially important after auto-sync adds many assets.
+    if semantic_emotion <= 0.0:
+        return 0.0
     intent: float = 1.0 if request.intent in asset.intents else 0.0
     intensity: float = intensity_score(
         request.intensity, asset.intensity_min, asset.intensity_max
     )
     diversity: float = diversity_score(asset.key, recent)
     priority: float = min(asset.priority, 2.0) / 2.0
-    relationship: float = asset.owner_affinity if is_owner and semantic_emotion > 0 else 0.0
+    relationship: float = asset.owner_affinity if is_owner else 0.0
     return (
         0.42 * semantic_emotion
         + 0.27 * intent
