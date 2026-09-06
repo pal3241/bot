@@ -83,6 +83,34 @@ class OpenAICompatibleProvider(LLMProvider):
             body["response_format"] = {"type": "json_object"}
         return body
 
+    @staticmethod
+    def _structured_reasoning_fallback(message: dict[str, object]) -> str | None:
+        """Accept reasoning only when it is clearly the structured final payload.
+
+        Some OpenRouter free models currently place the requested JSON object in
+        `message.reasoning` while returning `message.content = null`. We must not
+        expose arbitrary chain-of-thought, so this fallback is deliberately strict:
+        the reasoning text must itself be valid JSON with a non-empty `text` field.
+        """
+
+        reasoning = message.get("reasoning")
+        if not isinstance(reasoning, str) or not reasoning.strip():
+            return None
+        candidate = reasoning.strip()
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        text = parsed.get("text")
+        if not isinstance(text, str) or not text.strip():
+            return None
+        allowed_keys = {"text", "memory", "expression", "actions"}
+        if not set(parsed).issubset(allowed_keys):
+            return None
+        return candidate
+
     def _parse_response(
         self,
         body: str,
@@ -120,13 +148,22 @@ class OpenAICompatibleProvider(LLMProvider):
                 f"{self._provider_name} memotong response karena batas max_tokens="
                 f"{self._max_tokens}. Naikkan nilai maks token melalui AI Settings."
             )
-        if not isinstance(content, str) or not content.strip():
-            raise LLMProviderError(
-                f"{self._provider_name} mengembalikan response AI kosong: "
-                f"status={status}, body={body[:1000]}"
+
+        if isinstance(content, str) and content.strip():
+            result = content.strip()
+        else:
+            fallback = self._structured_reasoning_fallback(message)
+            if fallback is None:
+                raise LLMProviderError(
+                    f"{self._provider_name} mengembalikan response AI kosong: "
+                    f"status={status}, body={body[:1000]}"
+                )
+            result = fallback
+            print(
+                f"[SENA] provider={self._provider_name} "
+                "used structured reasoning fallback because content was empty"
             )
 
-        result = content.strip()
         if assistant_prefill and not result.startswith(assistant_prefill):
             result = assistant_prefill + result
 
