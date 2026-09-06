@@ -51,11 +51,44 @@ class ExpressionService:
             self._resolver,
             gif_search=self.gif_search,
         )
+        self._bind_runtime_events()
         self._log_loaded(catalog)
         print(
             "[SENNA EXPRESSION] internet GIF search="
             + ("ENABLED provider=tenor" if self.gif_search.enabled else "DISABLED (TENOR_API_KEY missing or disabled)")
         )
+
+    def _bind_runtime_events(self) -> None:
+        async def on_guild_emojis_update(
+            guild: discord.Guild,
+            before: tuple[discord.Emoji, ...],
+            after: tuple[discord.Emoji, ...],
+        ) -> None:
+            del guild, before, after
+            try:
+                self.refresh_runtime()
+            except Exception as error:
+                print(
+                    f"[SENNA EXPRESSION] emoji hot-sync failed "
+                    f"type={type(error).__name__} detail={error}"
+                )
+
+        async def on_guild_stickers_update(
+            guild: discord.Guild,
+            before: tuple[discord.GuildSticker, ...],
+            after: tuple[discord.GuildSticker, ...],
+        ) -> None:
+            del guild, before, after
+            try:
+                self.refresh_runtime()
+            except Exception as error:
+                print(
+                    f"[SENNA EXPRESSION] sticker hot-sync failed "
+                    f"type={type(error).__name__} detail={error}"
+                )
+
+        self._client.event(on_guild_emojis_update)
+        self._client.event(on_guild_stickers_update)
 
     @staticmethod
     def _log_loaded(catalog: ExpressionCatalog) -> None:
