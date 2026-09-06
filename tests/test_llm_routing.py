@@ -259,9 +259,9 @@ class NvidiaKimiConfigurationTests(unittest.TestCase):
             retry_delay_seconds=0.0,
         )
         body = provider._request_extra_body("moonshotai/kimi-k3", True)
-        self.assertEqual(body["reasoning_effort"], "max")
+        self.assertEqual(body["reasoning_effort"], "high")
         self.assertEqual(body["temperature"], 1.0)
-        self.assertEqual(body["max_tokens"], 4096)
+        self.assertEqual(body["max_tokens"], 2048)
         self.assertEqual(body["response_format"], {"type": "json_object"})
         self.assertNotIn("chat_template_kwargs", body)
 
