@@ -1,4 +1,5 @@
 from assistant import manager as _manager
+from assistant.response import AssistantResponse
 from assistant.routing_runtime_policy import (
     build_runtime_assistant,
     install_routing_runtime_policy,
@@ -7,7 +8,6 @@ from assistant.routing_runtime_policy import (
 install_routing_runtime_policy(_manager)
 
 AssistantManager = _manager.AssistantManager
-AssistantResponse = __import__("assistant.response", fromlist=["AssistantResponse"]).AssistantResponse
 
 
 def build_assistant_manager() -> AssistantManager:
