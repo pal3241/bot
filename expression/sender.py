@@ -3,7 +3,7 @@ from pathlib import Path
 import discord
 
 from expression.enums import AssetType
-from expression.gif_search import InternetGifResult, TenorGifSearch
+from expression.gif_search import GiphyGifSearch, InternetGifResult
 from expression.models import (
     DEFAULT_EXPRESSION,
     ExpressionAsset,
@@ -41,7 +41,7 @@ class DiscordExpressionSender:
         client: discord.Client,
         resolver: ExpressionResolver,
         *,
-        gif_search: TenorGifSearch | None = None,
+        gif_search: GiphyGifSearch | None = None,
     ) -> None:
         self._client: discord.Client = client
         self._resolver: ExpressionResolver = resolver
@@ -101,8 +101,6 @@ class DiscordExpressionSender:
         provider = self._gif_search
         if provider is None or not provider.enabled:
             return False
-        # Local/manual GIF catalog always has priority. Internet search is the fallback
-        # when Sena has no local GIF assets to choose from.
         if self._resolver.catalog.gifs:
             return False
         if not request.allow_bonus:
@@ -247,8 +245,11 @@ class DiscordExpressionSender:
         if result is None:
             return
         try:
+            content = result.media_url
+            if result.provider == "giphy":
+                content += "\nPowered by GIPHY"
             await message.channel.send(
-                result.media_url,
+                content,
                 allowed_mentions=discord.AllowedMentions.none(),
             )
         except (discord.Forbidden, discord.HTTPException) as error:
