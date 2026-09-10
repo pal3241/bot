@@ -65,7 +65,7 @@ class SenaFletUI(_BaseSenaFletUI):
 
             lines: list[str] = [
                 f"Auto-sync last refresh · emoji+={stats.emojis_added} sticker+={stats.stickers_added}",
-                f"Internet provider · {'Tenor enabled' if gif_enabled else 'disabled; isi TENOR_API_KEY'}",
+                f"Internet provider · {'GIPHY enabled' if gif_enabled else 'disabled; isi GIPHY_API_KEY'}",
                 "",
                 "Emoji runtime:",
             ]
@@ -118,14 +118,14 @@ class SenaFletUI(_BaseSenaFletUI):
             if not query:
                 raise ValueError("Isi query test GIF terlebih dahulu.")
             if not service.gif_search.enabled:
-                raise RuntimeError("Tenor belum aktif. Isi TENOR_API_KEY di .env lalu restart Sena.")
+                raise RuntimeError("GIPHY belum aktif. Isi GIPHY_API_KEY di .env lalu restart Sena.")
             result = await service.gif_search.search_query(query)
             if result is None:
-                self.expression_test_result.value = "Tenor tidak mengembalikan GIF yang dapat dipakai."
+                self.expression_test_result.value = "GIPHY tidak mengembalikan GIF yang dapat dipakai."
                 self.expression_test_result.color = WARNING
             else:
                 self.expression_test_result.value = (
-                    f"Tenor OK · id={result.content_id}\n"
+                    f"GIPHY OK · id={result.content_id}\n"
                     f"query={result.query}\n"
                     f"{result.media_url}"
                 )
@@ -185,13 +185,13 @@ class SenaFletUI(_BaseSenaFletUI):
                         controls=[
                             ft.Text("Internet GIF", color=TEXT, weight=ft.FontWeight.W_600),
                             ft.Text(
-                                "Sena mencari GIF melalui Tenor hanya saat Expression meminta GIF, intensity/cooldown lolos, dan tidak ada local GIF catalog. Query otomatis berasal dari emotion + intent; teks chat mentah tidak dikirim ke Tenor.",
+                                "Sena mencari GIF melalui GIPHY hanya saat Expression meminta GIF, intensity/cooldown lolos, dan tidak ada local GIF catalog. Query otomatis berasal dari emotion + intent; teks chat mentah tidak dikirim ke GIPHY. Powered by GIPHY.",
                                 color=MUTED,
                                 size=10,
                             ),
                             self.expression_test_query,
                             ft.Button(
-                                "Test Tenor Search",
+                                "Test GIPHY Search",
                                 icon=ft.Icons.SEARCH,
                                 on_click=self._expression_test_gif,
                             ),
