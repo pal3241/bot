@@ -1,0 +1,10 @@
+# Optional SENA Vision dependencies (desktop only).
+# Install the normal requirements first, then this file.
+#
+# Kept separate because MediaPipe/OpenCV native wheels are not generally usable
+# on Android/Termux and must never block the core Discord bot from installing.
+mediapipe==0.10.21
+numpy<2
+opencv-python<5
+opencv-contrib-python<5
+protobuf>=4.25.3,<5

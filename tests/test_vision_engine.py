@@ -14,6 +14,8 @@ class VisionExpressionEngineTests(unittest.TestCase):
                 "eyeWideRight": 0.05 + jitter,
                 "mouthSmileLeft": 0.05 + jitter,
                 "mouthSmileRight": 0.05 + jitter,
+                "noseSneerLeft": 0.02 + jitter,
+                "noseSneerRight": 0.02 + jitter,
             })
         engine.finish_calibration()
         return engine
@@ -46,6 +48,24 @@ class VisionExpressionEngineTests(unittest.TestCase):
         engine.add_neutral_sample({"jawOpen": 0.1})
         with self.assertRaises(ValueError):
             engine.finish_calibration()
+
+    def test_calibration_round_trip(self):
+        original = self._calibrated(arm_frames=1, cooldown_seconds=0)
+        payload = original.export_calibration()
+
+        restored = ExpressionEventEngine(arm_frames=1, cooldown_seconds=0)
+        restored.load_calibration(payload)
+
+        self.assertTrue(restored.calibrated)
+        self.assertEqual(
+            restored.z_scores({"jawOpen": 0.20}),
+            original.z_scores({"jawOpen": 0.20}),
+        )
+
+    def test_bad_calibration_version_is_rejected(self):
+        engine = ExpressionEventEngine()
+        with self.assertRaises(ValueError):
+            engine.load_calibration({"version": 999, "mean": {}, "std": {}})
 
 
 if __name__ == "__main__":

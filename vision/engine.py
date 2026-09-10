@@ -15,7 +15,7 @@ from typing import Mapping
 
 @dataclass(slots=True, frozen=True)
 class VisionObservation:
-    """Normalised observation emitted by a future MediaPipe/OpenCV backend."""
+    """Normalised observation emitted by a MediaPipe/OpenCV style backend."""
 
     blendshapes: Mapping[str, float] = field(default_factory=dict)
     gestures: frozenset[str] = field(default_factory=frozenset)
@@ -35,9 +35,11 @@ class ExpressionEventEngine:
     """Calibrate facial channels and emit stable semantic expression events.
 
     The engine intentionally does not know Discord IDs, emoji names, GIF URLs,
-    cameras, or MediaPipe.  This keeps vision optional and lets the existing
+    cameras, or MediaPipe. This keeps vision optional and lets the existing
     expression resolver decide how an intent should be rendered.
     """
+
+    CALIBRATION_VERSION = 1
 
     DEFAULT_RULES = {
         "shocked": {"jawOpen": 5.0, "eyeWideLeft": 2.0, "eyeWideRight": 2.0},
@@ -74,6 +76,8 @@ class ExpressionEventEngine:
         self._candidate_frames = 0
 
     def add_neutral_sample(self, blendshapes: Mapping[str, float]) -> None:
+        if not blendshapes:
+            return
         self._samples.append({k: float(v) for k, v in blendshapes.items()})
 
     def finish_calibration(self, *, minimum_samples: int = 15) -> None:
@@ -87,6 +91,42 @@ class ExpressionEventEngine:
             # turning tiny detector noise into enormous z-scores.
             self._std[channel] = max(pstdev(values), 0.01)
         self._samples.clear()
+
+    def export_calibration(self) -> dict[str, object]:
+        if not self.calibrated:
+            raise ValueError("vision engine is not calibrated")
+        return {
+            "version": self.CALIBRATION_VERSION,
+            "mean": dict(self._mean),
+            "std": dict(self._std),
+        }
+
+    def load_calibration(self, data: Mapping[str, object]) -> None:
+        version = int(data.get("version", 0))
+        if version != self.CALIBRATION_VERSION:
+            raise ValueError(f"unsupported vision calibration version: {version}")
+        raw_mean = data.get("mean")
+        raw_std = data.get("std")
+        if not isinstance(raw_mean, Mapping) or not isinstance(raw_std, Mapping):
+            raise ValueError("vision calibration must contain mean/std mappings")
+
+        mean: dict[str, float] = {}
+        std: dict[str, float] = {}
+        for name, value in raw_mean.items():
+            if not isinstance(name, str):
+                continue
+            mean[name] = float(value)
+        for name, value in raw_std.items():
+            if not isinstance(name, str):
+                continue
+            std[name] = max(float(value), 0.01)
+        if not mean:
+            raise ValueError("vision calibration contains no channels")
+        self._mean = mean
+        self._std = {name: std.get(name, 0.01) for name in mean}
+        self._samples.clear()
+        self._candidate = None
+        self._candidate_frames = 0
 
     def z_scores(self, blendshapes: Mapping[str, float]) -> dict[str, float]:
         if not self.calibrated:
