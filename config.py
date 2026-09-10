@@ -90,10 +90,8 @@ STT_WAKE_WORDS: tuple[str, ...] = ("sen", "sena", "senna", "hey sen", "hey sena"
 STT_QUEUE_SIZE: int = 8
 STT_WORKERS: int = 1
 
-# Optional local webcam expression system. Disabled by default so desktop users
-# opt in explicitly and Android/Termux never tries to import native CV wheels.
-SENA_VISION_ENABLED: bool = _env_bool("SENA_VISION_ENABLED", False)
-SENA_VISION_CHANNEL_ID: int = _env_int("SENA_VISION_CHANNEL_ID", 0)
+# Optional local webcam expression system. Starting/stopping Vision and selecting
+# its Discord text channel are runtime menu actions, not environment configuration.
 SENA_VISION_CAMERA_INDEX: int = _env_int("SENA_VISION_CAMERA_INDEX", 0)
 SENA_VISION_CALIBRATION_SECONDS: float = max(
     2.0, _env_float("SENA_VISION_CALIBRATION_SECONDS", 5.0)

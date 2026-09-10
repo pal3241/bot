@@ -21,25 +21,29 @@ pip install -r requirements.txt
 pip install -r requirements-vision.txt
 ```
 
-The optional requirements are separate because MediaPipe/OpenCV native wheels
-must not break Android/Termux installation.
+Vision currently uses MediaPipe 1.0.1 so Python 3.13 desktop environments can
+install a compatible wheel. The optional requirements remain separate because
+MediaPipe/OpenCV must not break Android/Termux installation.
 
-Configure `.env`:
+Optional `.env` tuning:
 
 ```env
-SENA_VISION_ENABLED=true
-SENA_VISION_CHANNEL_ID=123456789012345678
 SENA_VISION_CAMERA_INDEX=0
 SENA_VISION_CALIBRATION_SECONDS=5
 SENA_VISION_COOLDOWN_SECONDS=6
 ```
 
-`SENA_VISION_CHANNEL_ID` is explicit by design; camera reactions are never sent
-to an arbitrary guild/channel.
+There is no Vision Discord channel ID setting. Start SENA normally and open
+**Vision / Webcam**. Use `channel` to choose the server/text channel from a
+menu, then use `start`. If no text channel has been selected yet, `start`
+automatically opens the same channel picker.
 
-Start SENA normally, open **Vision / Webcam** from the terminal feature menu,
-and use `start`. If `SENA_VISION_ENABLED=true`, entering that menu starts the
-worker automatically.
+Changing the Vision output channel while detection is active safely stops the
+old worker, switches the destination, and starts the worker again.
+
+The **Voice** tab remains separate: its Discord Voice Transport panel already
+lets you choose a guild and voice channel and provides **Join** / **Leave**
+controls. Voice channel selection does not require typing a Discord channel ID.
 
 ## First-run calibration
 
@@ -87,4 +91,4 @@ use. That directory is ignored by git.
 - `mediapipe_backend.py` — webcam + MediaPipe face/hand inference
 - `expression_bridge.py` — semantic event -> SENA `ExpressionRequest`
 - `service.py` — background worker + proactive Discord dispatch
-- `features/vision.py` — terminal feature controller
+- `features/vision.py` — terminal feature controller + channel picker

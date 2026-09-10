@@ -3,8 +3,9 @@
 #
 # Kept separate because MediaPipe/OpenCV native wheels are not generally usable
 # on Android/Termux and must never block the core Discord bot from installing.
-mediapipe==0.10.21
-numpy<2
+#
+# MediaPipe 0.10.21 has no compatible wheel for Python 3.13. MediaPipe 1.0.1
+# ships py3 desktop wheels, including Linux x86_64/aarch64 and Windows x86_64/ARM64.
+mediapipe==1.0.1
 opencv-python<5
 opencv-contrib-python<5
-protobuf>=4.25.3,<5
