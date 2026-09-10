@@ -45,6 +45,9 @@ DEFAULT_FEATURE_SPECS: tuple[FeatureSpec, ...] = (
     # gTTS works on Android/Termux even when discord-ext-voice-recv/Faster Whisper do not.
     FeatureSpec("tts", "voice.providers.gtts_provider", "TTS / gTTS"),
     FeatureSpec("voice", "features.voice", "Discord Voice / STT"),
+    # Computer vision uses native MediaPipe/OpenCV wheels. Keep it desktop-only
+    # so Android/Termux startup remains isolated from unsupported dependencies.
+    FeatureSpec("vision", "features.vision", "Vision / Webcam", allow_android=False),
 )
 
 
