@@ -6,7 +6,7 @@ import discord
 
 from expression.autosync import AutoSyncStats, auto_sync_catalog
 from expression.exceptions import ExpressionCatalogError
-from expression.gif_search import TenorGifSearch
+from expression.gif_search import GiphyGifSearch
 from expression.history import ExpressionHistory
 from expression.loader import empty_catalog, load_catalog
 from expression.models import ExpressionCatalog
@@ -35,7 +35,7 @@ class ExpressionService:
         self._base_catalog = catalog
         self._sync_stats = AutoSyncStats(0, 0, len(catalog.emojis), len(catalog.stickers))
         self._last_runtime_signature: tuple[object, ...] | None = None
-        self.gif_search = TenorGifSearch.from_env()
+        self.gif_search = GiphyGifSearch.from_env()
         history = ExpressionHistory(
             catalog.policy.recent_emoji_size,
             catalog.policy.recent_bonus_size,
@@ -57,9 +57,9 @@ class ExpressionService:
         print(
             "[SENNA EXPRESSION] internet GIF search="
             + (
-                "ENABLED provider=tenor"
+                "ENABLED provider=giphy"
                 if self.gif_search.enabled
-                else "DISABLED (TENOR_API_KEY missing or disabled)"
+                else "DISABLED (GIPHY_API_KEY missing or disabled)"
             )
         )
 
@@ -112,7 +112,7 @@ class ExpressionService:
 
     def status_detail(self) -> str:
         stats = self._sync_stats
-        gif_state = "tenor:on" if self.gif_search.enabled else "tenor:off"
+        gif_state = "giphy:on" if self.gif_search.enabled else "giphy:off"
         return (
             f"emoji={stats.total_emojis} sticker={stats.total_stickers} "
             f"local_gif={len(self._resolver.catalog.gifs)} {gif_state}"
@@ -143,9 +143,6 @@ class ExpressionService:
         return (emoji_signature, tuple(sorted(sticker_signature)))
 
     def refresh_runtime(self, *, force: bool = False) -> bool:
-        # Health polling asks for status every few seconds. Once runtime assets
-        # have been synced, that polling must not rebuild the catalog or refresh
-        # the sender cache. Discord gateway events/manual sync use force=True.
         if self._last_runtime_signature is not None and not force:
             return False
 
