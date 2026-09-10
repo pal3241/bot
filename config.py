@@ -14,6 +14,27 @@ def _default_gif_folder() -> Path:
     return Path.home() / "Downloads"
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().casefold() in {"1", "true", "yes", "on", "enabled"}
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)).strip())
+    except (TypeError, ValueError):
+        return default
+
+
 GIF_FOLDER: Path = _default_gif_folder()
 MAX_EMOJI_SIZE: int = 256 * 1024
 TTS_PROVIDER: str = "gtts"
@@ -68,3 +89,21 @@ STT_VOICE_SESSION_TIMEOUT_SECONDS: float = 120.0
 STT_WAKE_WORDS: tuple[str, ...] = ("sen", "sena", "senna", "hey sen", "hey sena")
 STT_QUEUE_SIZE: int = 8
 STT_WORKERS: int = 1
+
+# Optional local webcam expression system. Disabled by default so desktop users
+# opt in explicitly and Android/Termux never tries to import native CV wheels.
+SENA_VISION_ENABLED: bool = _env_bool("SENA_VISION_ENABLED", False)
+SENA_VISION_CHANNEL_ID: int = _env_int("SENA_VISION_CHANNEL_ID", 0)
+SENA_VISION_CAMERA_INDEX: int = _env_int("SENA_VISION_CAMERA_INDEX", 0)
+SENA_VISION_CALIBRATION_SECONDS: float = max(
+    2.0, _env_float("SENA_VISION_CALIBRATION_SECONDS", 5.0)
+)
+SENA_VISION_COOLDOWN_SECONDS: float = max(
+    0.0, _env_float("SENA_VISION_COOLDOWN_SECONDS", 6.0)
+)
+SENA_VISION_MODEL_DIR: Path = Path(
+    os.getenv("SENA_VISION_MODEL_DIR", "models/vision")
+).expanduser()
+SENA_VISION_CALIBRATION_FILE: Path = Path(
+    os.getenv("SENA_VISION_CALIBRATION_FILE", "data/vision_calibration.json")
+).expanduser()
