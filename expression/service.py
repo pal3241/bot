@@ -9,7 +9,11 @@ from expression.exceptions import ExpressionCatalogError
 from expression.gif_search import GiphyGifSearch
 from expression.history import ExpressionHistory
 from expression.loader import empty_catalog, load_catalog
-from expression.local_gif_pack import LocalGifPackResult, ensure_local_gif_pack
+from expression.local_gif_pack import (
+    LocalGifPackResult,
+    ensure_local_gif_pack,
+    merge_curated_gifs,
+)
 from expression.models import ExpressionCatalog
 from expression.resolver import ExpressionResolver
 from expression.sender import DiscordExpressionSender
@@ -33,6 +37,7 @@ class ExpressionService:
                 f"[SENNA EXPRESSION] startup catalog invalid detail={error}; "
                 "using Unicode fallback"
             )
+        catalog = merge_curated_gifs(catalog, asset_root)
         self._base_catalog = catalog
         self._sync_stats = AutoSyncStats(0, 0, len(catalog.emojis), len(catalog.stickers))
         self._last_runtime_signature: tuple[object, ...] | None = None
@@ -182,6 +187,7 @@ class ExpressionService:
                 "previous catalog retained"
             )
             return False
+        catalog = merge_curated_gifs(catalog, self._asset_root)
         self._base_catalog = catalog
         self._last_runtime_signature = None
         self.refresh_runtime(force=True)
