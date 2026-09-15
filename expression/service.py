@@ -84,7 +84,7 @@ class ExpressionService:
         return result
 
     def _schedule_local_gif_bootstrap(self) -> None:
-        if self._local_gif_bootstrap_started:
+        if getattr(self, "_local_gif_bootstrap_started", False):
             return
         self._local_gif_bootstrap_started = True
 
