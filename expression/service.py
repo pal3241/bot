@@ -1,3 +1,4 @@
+import asyncio
 import random
 import time
 from pathlib import Path
@@ -41,6 +42,8 @@ class ExpressionService:
         self._base_catalog = catalog
         self._sync_stats = AutoSyncStats(0, 0, len(catalog.emojis), len(catalog.stickers))
         self._last_runtime_signature: tuple[object, ...] | None = None
+        self._local_gif_bootstrap_started = False
+        self._local_gif_bootstrap_task: asyncio.Task[LocalGifPackResult] | None = None
         self.gif_search = GiphyGifSearch.from_env()
         history = ExpressionHistory(
             catalog.policy.recent_emoji_size,
@@ -79,6 +82,32 @@ class ExpressionService:
         if result.ready:
             self.reload()
         return result
+
+    def _schedule_local_gif_bootstrap(self) -> None:
+        if self._local_gif_bootstrap_started:
+            return
+        self._local_gif_bootstrap_started = True
+
+        async def runner() -> LocalGifPackResult:
+            try:
+                return await self.bootstrap_local_gifs()
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                print(
+                    f"[SENNA EXPRESSION] curated local GIF bootstrap failed "
+                    f"type={type(error).__name__} detail={error}"
+                )
+                return LocalGifPackResult(0, 0, 1)
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._local_gif_bootstrap_started = False
+            return
+        self._local_gif_bootstrap_task = loop.create_task(
+            runner(), name="sena-curated-local-gif-pack"
+        )
 
     def _bind_runtime_events(self) -> None:
         async def on_guild_emojis_update(
@@ -160,6 +189,7 @@ class ExpressionService:
         return (emoji_signature, tuple(sorted(sticker_signature)))
 
     def refresh_runtime(self, *, force: bool = False) -> bool:
+        self._schedule_local_gif_bootstrap()
         if self._last_runtime_signature is not None and not force:
             return False
 
