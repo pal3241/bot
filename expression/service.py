@@ -9,6 +9,7 @@ from expression.exceptions import ExpressionCatalogError
 from expression.gif_search import GiphyGifSearch
 from expression.history import ExpressionHistory
 from expression.loader import empty_catalog, load_catalog
+from expression.local_gif_pack import LocalGifPackResult, ensure_local_gif_pack
 from expression.models import ExpressionCatalog
 from expression.resolver import ExpressionResolver
 from expression.sender import DiscordExpressionSender
@@ -62,6 +63,17 @@ class ExpressionService:
                 else "DISABLED (GIPHY_API_KEY missing or disabled)"
             )
         )
+
+    async def bootstrap_local_gifs(self) -> LocalGifPackResult:
+        """Download the curated meme/cat pack once, then reload local catalog entries."""
+
+        result = await ensure_local_gif_pack(self._asset_root)
+        if result.disabled:
+            print("[SENNA EXPRESSION] curated local GIF pack disabled")
+            return result
+        if result.ready:
+            self.reload()
+        return result
 
     def _bind_runtime_events(self) -> None:
         async def on_guild_emojis_update(
