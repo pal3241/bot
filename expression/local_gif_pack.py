@@ -7,6 +7,9 @@ from pathlib import Path
 
 import aiohttp
 
+from expression.enums import AssetType, Emotion, ExpressionIntent
+from expression.models import ExpressionAsset, ExpressionCatalog
+
 
 MAX_GIF_BYTES = 25 * 1024 * 1024
 _DEFAULT_TIMEOUT_SECONDS = 12.0
@@ -20,6 +23,13 @@ class CuratedGifSpec:
     source_url: str
     source_page: str
     category: str
+    emotion: Emotion
+    intents: frozenset[ExpressionIntent]
+    intensity_min: float = 0.70
+    intensity_max: float = 1.0
+    owner_affinity: float = 0.15
+    priority: float = 1.0
+    description: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +53,16 @@ CURATED_GIFS: tuple[CuratedGifSpec, ...] = (
         source_url="https://media1.tenor.com/m/-RgqA9l02AEAAAAd/kucing-lucu.gif",
         source_page="https://tenor.com/view/kucing-lucu-gif-17949142510906693633",
         category="cat",
+        emotion=Emotion.EXCITED,
+        intents=frozenset(
+            {
+                ExpressionIntent.CELEBRATION,
+                ExpressionIntent.REACTION,
+                ExpressionIntent.PLAYFUL_TEASING,
+            }
+        ),
+        priority=1.15,
+        description="Kucing berdiri/dance untuk reaction hype dan lucu.",
     ),
     CuratedGifSpec(
         key="cat_happy_reaction",
@@ -50,6 +70,15 @@ CURATED_GIFS: tuple[CuratedGifSpec, ...] = (
         source_url="https://media.tenor.com/lfDATg4Bhc0AAAAM/happy-cat.gif",
         source_page="https://tenor.com/view/kucing-lucu-imut-gemes-cat-gif-16416657",
         category="cat",
+        emotion=Emotion.HAPPY,
+        intents=frozenset(
+            {
+                ExpressionIntent.GREETING,
+                ExpressionIntent.PRAISE,
+                ExpressionIntent.REACTION,
+            }
+        ),
+        description="Happy cat reaction.",
     ),
     CuratedGifSpec(
         key="cat_orange_laugh",
@@ -57,6 +86,16 @@ CURATED_GIFS: tuple[CuratedGifSpec, ...] = (
         source_url="https://media.tenor.com/PfiuP87QTQUAAAAM/cat-orange-cat.gif",
         source_page="https://tenor.com/view/kucing-lucu-imut-gemes-cat-gif-16416657",
         category="cat",
+        emotion=Emotion.LAUGHING,
+        intents=frozenset(
+            {
+                ExpressionIntent.REACTION,
+                ExpressionIntent.PLAYFUL_TEASING,
+                ExpressionIntent.CELEBRATION,
+            }
+        ),
+        priority=1.10,
+        description="Orange cat laughing reaction.",
     ),
     CuratedGifSpec(
         key="cat_yapapa",
@@ -64,6 +103,15 @@ CURATED_GIFS: tuple[CuratedGifSpec, ...] = (
         source_url="https://media.tenor.com/X-jA_vmTHUYAAAAM/yapapa-yapapa-cat.gif",
         source_page="https://tenor.com/view/kucing-lucu-imut-gemes-cat-gif-16416657",
         category="cat",
+        emotion=Emotion.CONFUSED,
+        intents=frozenset(
+            {
+                ExpressionIntent.CONFUSION,
+                ExpressionIntent.QUESTIONING,
+                ExpressionIntent.REACTION,
+            }
+        ),
+        description="Kucing muka aneh untuk bingung/questioning.",
     ),
     CuratedGifSpec(
         key="jomok_phone",
@@ -71,6 +119,16 @@ CURATED_GIFS: tuple[CuratedGifSpec, ...] = (
         source_url="https://media1.tenor.com/m/EfF65GS63Q8AAAAd/jomok.gif",
         source_page="https://tenor.com/view/jomok-gif-1292949689393143055",
         category="meme",
+        emotion=Emotion.SMUG,
+        intents=frozenset(
+            {
+                ExpressionIntent.REACTION,
+                ExpressionIntent.MOCKING,
+                ExpressionIntent.QUESTIONING,
+            }
+        ),
+        owner_affinity=0.20,
+        description="Meme telepon/smug reaction.",
     ),
     CuratedGifSpec(
         key="jomok_bersiaplah",
@@ -78,6 +136,16 @@ CURATED_GIFS: tuple[CuratedGifSpec, ...] = (
         source_url="https://media.tenor.com/VFLCxoowMI0AAAAM/bersiaplah-jomok.gif",
         source_page="https://tenor.com/view/jomok-gif-1292949689393143055",
         category="meme",
+        emotion=Emotion.SUSPICIOUS,
+        intents=frozenset(
+            {
+                ExpressionIntent.WARNING,
+                ExpressionIntent.REACTION,
+                ExpressionIntent.PLAYFUL_TEASING,
+            }
+        ),
+        owner_affinity=0.20,
+        description="Bersiaplah meme reaction.",
     ),
     CuratedGifSpec(
         key="meme_halah_nyocot",
@@ -85,6 +153,17 @@ CURATED_GIFS: tuple[CuratedGifSpec, ...] = (
         source_url="https://media.tenor.com/VVIZNQLHBsAAAAAM/halah-nyocot.gif",
         source_page="https://tenor.com/view/jomok-gif-1292949689393143055",
         category="meme",
+        emotion=Emotion.TEASING,
+        intents=frozenset(
+            {
+                ExpressionIntent.MOCKING,
+                ExpressionIntent.LIGHT_SCOLDING,
+                ExpressionIntent.PLAYFUL_TEASING,
+            }
+        ),
+        owner_affinity=0.25,
+        priority=1.10,
+        description="Halah nyocot meme untuk teasing ringan.",
     ),
     CuratedGifSpec(
         key="meme_cukurukuk_dance",
@@ -92,6 +171,16 @@ CURATED_GIFS: tuple[CuratedGifSpec, ...] = (
         source_url="https://media.tenor.com/Iq9Thyqp_hsAAAAM/cukurukuk-meme.gif",
         source_page="https://tenor.com/view/jomok-gif-1292949689393143055",
         category="meme",
+        emotion=Emotion.LAUGHING,
+        intents=frozenset(
+            {
+                ExpressionIntent.CELEBRATION,
+                ExpressionIntent.REACTION,
+                ExpressionIntent.PLAYFUL_TEASING,
+            }
+        ),
+        owner_affinity=0.20,
+        description="Dance meme untuk ketawa/celebration.",
     ),
     CuratedGifSpec(
         key="mas_amba_nyari_ribut",
@@ -99,6 +188,17 @@ CURATED_GIFS: tuple[CuratedGifSpec, ...] = (
         source_url="https://media1.tenor.com/m/4ynnYJxH95YAAAAd/mas-amba-nyari-ribut.gif",
         source_page="https://tenor.com/view/mas-amba-nyari-ribut-meme-jomok-meme-ngawi-gif-16368868722779617174",
         category="mas_amba",
+        emotion=Emotion.SUSPICIOUS,
+        intents=frozenset(
+            {
+                ExpressionIntent.REACTION,
+                ExpressionIntent.WARNING,
+                ExpressionIntent.MOCKING,
+            }
+        ),
+        owner_affinity=0.25,
+        priority=1.15,
+        description="Mas Amba nyari ribut reaction meme.",
     ),
     CuratedGifSpec(
         key="mas_amba_ga_logis",
@@ -106,13 +206,33 @@ CURATED_GIFS: tuple[CuratedGifSpec, ...] = (
         source_url="https://media.tenor.com/ZBtJFtWJeFYAAAAM/ga-logis-ambatukam.gif",
         source_page="https://tenor.com/view/mas-amba-nyari-ribut-meme-jomok-meme-ngawi-gif-16368868722779617174",
         category="mas_amba",
+        emotion=Emotion.CONFUSED,
+        intents=frozenset(
+            {
+                ExpressionIntent.CONFUSION,
+                ExpressionIntent.REACTION,
+                ExpressionIntent.MOCKING,
+            }
+        ),
+        owner_affinity=0.25,
+        description="Mas Amba ga logis/confused meme.",
     ),
     CuratedGifSpec(
-        key="mas_rusdi_si_Imut",
-        filename="mas_rusdi_si_Imut.gif",
+        key="mas_rusdi_si_imut",
+        filename="mas_rusdi_si_imut.gif",
         source_url="https://media.tenor.com/UKimM5KATKAAAAAM/mas-rusdi-si-imut.gif",
         source_page="https://tenor.com/view/jomok-gif-1292949689393143055",
         category="meme",
+        emotion=Emotion.PLAYFUL,
+        intents=frozenset(
+            {
+                ExpressionIntent.REACTION,
+                ExpressionIntent.PLAYFUL_TEASING,
+                ExpressionIntent.GREETING,
+            }
+        ),
+        owner_affinity=0.20,
+        description="Mas Rusdi si imut reaction meme.",
     ),
 )
 
@@ -149,6 +269,51 @@ def _valid_local_gif(path: Path) -> bool:
             return handle.read(6) in {b"GIF87a", b"GIF89a"}
     except OSError:
         return False
+
+
+def curated_local_assets(asset_root: Path) -> tuple[ExpressionAsset, ...]:
+    assets: list[ExpressionAsset] = []
+    for spec in CURATED_GIFS:
+        path = asset_root / spec.filename
+        if not _valid_local_gif(path):
+            continue
+        assets.append(
+            ExpressionAsset(
+                key=spec.key,
+                type=AssetType.GIF,
+                name=spec.key.replace("_", " "),
+                discord_id=None,
+                guild_id=None,
+                local_path=path.resolve(),
+                animated=True,
+                emotion=spec.emotion,
+                intents=spec.intents,
+                intensity_min=spec.intensity_min,
+                intensity_max=spec.intensity_max,
+                tags=frozenset({spec.category, "local", "curated", "meme"}),
+                enabled=True,
+                owner_affinity=spec.owner_affinity,
+                priority=spec.priority,
+                description=spec.description,
+                safe=True,
+            )
+        )
+    return tuple(assets)
+
+
+def merge_curated_gifs(catalog: ExpressionCatalog, asset_root: Path) -> ExpressionCatalog:
+    curated = curated_local_assets(asset_root)
+    if not curated:
+        return catalog
+    curated_keys = {asset.key for asset in curated}
+    existing = tuple(asset for asset in catalog.gifs if asset.key not in curated_keys)
+    return ExpressionCatalog(
+        version=catalog.version,
+        policy=catalog.policy,
+        emojis=catalog.emojis,
+        stickers=catalog.stickers,
+        gifs=existing + curated,
+    )
 
 
 async def _download_one(
