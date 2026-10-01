@@ -61,8 +61,3 @@ class NvidiaNimProvider(OpenAICompatibleProvider):
         if json_object:
             body["response_format"] = {"type": "json_object"}
         return body
-
-        body = {"chat_template_kwargs": {"enable_thinking": False}}
-        if json_object:
-            body["response_format"] = {"type": "json_object"}
-        return body
