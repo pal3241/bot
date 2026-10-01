@@ -131,7 +131,7 @@ class RoutingClassifierTests(unittest.TestCase):
 
 
 class LLMManagerRoutingTests(unittest.IsolatedAsyncioTestCase):
-    async def test_complex_route_uses_kimi_k3(self) -> None:
+    async def test_complex_route_uses_glm_5_3_flash(self) -> None:
         primary = FakeProvider()
         nim = FakeProvider(response='{"text":"complex"}')
         manager = LLMManager(
@@ -142,7 +142,7 @@ class LLMManagerRoutingTests(unittest.IsolatedAsyncioTestCase):
             routes={
                 RoutingTier.COMPLEX: ModelTarget(
                     "nvidia_nim",
-                    "moonshotai/kimi-k3",
+                    "z-ai/glm-5-3-flash",
                 )
             },
         )
@@ -151,7 +151,7 @@ class LLMManagerRoutingTests(unittest.IsolatedAsyncioTestCase):
             tier=RoutingTier.COMPLEX,
         )
         self.assertEqual(response, '{"text":"complex"}')
-        self.assertEqual(nim.models, ["moonshotai/kimi-k3"])
+        self.assertEqual(nim.models, ["z-ai/glm-5-3-flash"])
         await manager.close()
 
     async def test_failed_complex_model_falls_back(self) -> None:
@@ -160,12 +160,12 @@ class LLMManagerRoutingTests(unittest.IsolatedAsyncioTestCase):
         manager = LLMManager(
             nim,
             "nvidia_nim",
-            "moonshotai/kimi-k3",
+            "z-ai/glm-5-3-flash",
             providers={"nvidia_nim": nim, "openrouter": fallback},
             routes={
                 RoutingTier.COMPLEX: ModelTarget(
                     "nvidia_nim",
-                    "moonshotai/kimi-k3",
+                    "z-ai/glm-5-3-flash",
                 )
             },
             fallback_targets=(
@@ -186,10 +186,10 @@ class LLMManagerRoutingTests(unittest.IsolatedAsyncioTestCase):
         manager = LLMManager(
             slow_primary,
             "nvidia_nim",
-            "moonshotai/kimi-k3",
+            "z-ai/glm-5-3-flash",
             providers={"openrouter": fast, "nvidia_nim": slow_primary},
             routes={RoutingTier.FAST: ModelTarget("openrouter", "fast-model")},
-            fallback_targets=(ModelTarget("nvidia_nim", "moonshotai/kimi-k3"),),
+            fallback_targets=(ModelTarget("nvidia_nim", "z-ai/glm-5-3-flash"),),
             tier_fallback_targets={
                 RoutingTier.FAST: (ModelTarget("openrouter", "openai/gpt-4o-mini"),)
             },
@@ -248,8 +248,8 @@ class LLMManagerRoutingTests(unittest.IsolatedAsyncioTestCase):
         await manager.close()
 
 
-class NvidiaKimiConfigurationTests(unittest.TestCase):
-    def test_kimi_keeps_reasoning_enabled_and_uses_json_mode(self) -> None:
+class NvidiaGlmConfigurationTests(unittest.TestCase):
+    def test_glm_keeps_reasoning_enabled_and_uses_json_mode(self) -> None:
         provider = NvidiaNimProvider(
             api_key="test",
             base_url="https://example.com/v1",
@@ -258,12 +258,12 @@ class NvidiaKimiConfigurationTests(unittest.TestCase):
             retry_count=0,
             retry_delay_seconds=0.0,
         )
-        body = provider._request_extra_body("moonshotai/kimi-k3", True)
+        body = provider._request_extra_body("z-ai/glm-5-3-flash", True)
         self.assertEqual(body["reasoning_effort"], "high")
-        self.assertEqual(body["temperature"], 1.0)
-        self.assertEqual(body["max_tokens"], 2048)
+        self.assertEqual(body["temperature"], 0.5)
+        self.assertEqual(body["max_tokens"], 1024)
         self.assertEqual(body["response_format"], {"type": "json_object"})
-        self.assertNotIn("chat_template_kwargs", body)
+        self.assertEqual(body["chat_template_kwargs"], {"clear_thinking": True})
 
 
 class PersistedRoutingConfigurationTests(unittest.TestCase):
@@ -284,7 +284,7 @@ class PersistedRoutingConfigurationTests(unittest.TestCase):
             standard_provider="primary",
             standard_model="",
             complex_provider="nvidia_nim",
-            complex_model="moonshotai/kimi-k3",
+            complex_model="z-ai/glm-5-3-flash",
             fallback_provider="openrouter",
             fallback_model="fallback-model",
             json_prefill_enabled=False,
@@ -310,7 +310,7 @@ class PersistedRoutingConfigurationTests(unittest.TestCase):
         )
         self.assertEqual(
             manager._routes[RoutingTier.COMPLEX],
-            ModelTarget("nvidia_nim", "moonshotai/kimi-k3"),
+            ModelTarget("nvidia_nim", "z-ai/glm-5-3-flash"),
         )
         self.assertFalse(manager._json_prefill_enabled)
         self.assertFalse(manager._prompt_cache_enabled)
@@ -332,7 +332,7 @@ class PersistedRoutingConfigurationTests(unittest.TestCase):
             standard_provider="primary",
             standard_model="",
             complex_provider="nvidia_nim",
-            complex_model="moonshotai/kimi-k3",
+            complex_model="z-ai/glm-5-3-flash",
             fallback_provider="openrouter",
             fallback_model="openai/gpt-4o-mini",
         )
@@ -372,7 +372,7 @@ class PersistedRoutingConfigurationTests(unittest.TestCase):
             standard_provider="primary",
             standard_model="",
             complex_provider="nvidia_nim",
-            complex_model="moonshotai/kimi-k3",
+            complex_model="z-ai/glm-5-3-flash",
             fallback_provider="openrouter",
             fallback_model="openai/gpt-4o-mini",
         )

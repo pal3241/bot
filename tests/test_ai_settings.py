@@ -31,7 +31,7 @@ class AISettingsTests(unittest.TestCase):
             standard_provider="openrouter",
             standard_model="qwen/qwen3-30b-a3b",
             complex_provider="nvidia_nim",
-            complex_model="moonshotai/kimi-k3",
+            complex_model="z-ai/glm-5-3-flash",
             prompt_cache_enabled=False,
         )
         with tempfile.TemporaryDirectory() as folder:
@@ -52,6 +52,7 @@ class AISettingsTests(unittest.TestCase):
             "retry_delay_seconds": initial.retry_delay_seconds,
             "chat_timeout_seconds": initial.chat_timeout_seconds,
             "history_max_messages": initial.history_max_messages,
+            "complex_model": "moonshotai/kimi-k3",
         }
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "ai_settings.json"
@@ -60,7 +61,7 @@ class AISettingsTests(unittest.TestCase):
         self.assertTrue(loaded.routing_enabled)
         self.assertEqual(loaded.fast_provider, "openrouter")
         self.assertEqual(loaded.standard_provider, "openrouter")
-        self.assertEqual(loaded.complex_model, "moonshotai/kimi-k3")
+        self.assertEqual(loaded.complex_model, "z-ai/glm-5-3-flash")
 
     def test_explicit_provider_requires_model(self) -> None:
         invalid = replace(settings(), fast_provider="nvidia_nim", fast_model="")
