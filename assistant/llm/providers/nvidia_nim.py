@@ -14,9 +14,9 @@ def _positive_int_env(name: str, fallback: int) -> int:
     return value if value > 0 else fallback
 
 
-def _kimi_reasoning_effort() -> str:
-    value = os.getenv("SENA_KIMI_REASONING_EFFORT", "high").strip().casefold()
-    return value if value in {"low", "medium", "high", "max"} else "high"
+def _glm_reasoning_effort() -> str:
+    value = os.getenv("SENA_GLM_REASONING_EFFORT", "high").strip().casefold()
+    return value if value in {"low", "high", "max"} else "high"
 
 
 class NvidiaNimProvider(OpenAICompatibleProvider):
@@ -43,20 +43,24 @@ class NvidiaNimProvider(OpenAICompatibleProvider):
 
     def _request_extra_body(self, model: str, json_object: bool) -> dict[str, object]:
         normalized = model.strip().casefold()
-        if normalized == "moonshotai/kimi-k3":
+        if normalized == "z-ai/glm-5-3-flash":
             body: dict[str, object] = {
-                "temperature": 1.0,
-                "reasoning_effort": _kimi_reasoning_effort(),
-                # Kimi K3 needs room for reasoning, but forcing 4096 tokens plus
-                # max reasoning made compact math questions unnecessarily slow.
+                "temperature": 0.5,
+                "reasoning_effort": _glm_reasoning_effort(),
+                "chat_template_kwargs": {"clear_thinking": True},
                 "max_tokens": max(
                     self._max_tokens,
-                    _positive_int_env("SENA_KIMI_MIN_MAX_TOKENS", 2048),
+                    _positive_int_env("SENA_GLM_MIN_MAX_TOKENS", 1024),
                 ),
             }
             if json_object:
                 body["response_format"] = {"type": "json_object"}
             return body
+
+        body = {"chat_template_kwargs": {"enable_thinking": False}}
+        if json_object:
+            body["response_format"] = {"type": "json_object"}
+        return body
 
         body = {"chat_template_kwargs": {"enable_thinking": False}}
         if json_object:
