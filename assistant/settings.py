@@ -95,63 +95,67 @@ def load_settings(path: Path, initial: AISettings) -> AISettings:
     return validate_settings(
         _migrate_legacy_complex_model(
             AISettings(
-            provider_name=_string(parsed, "provider_name", path),
-            openrouter_model=_string(parsed, "openrouter_model", path),
-            nvidia_nim_model=_string(parsed, "nvidia_nim_model", path),
-            nvidia_nim_base_url=_string(parsed, "nvidia_nim_base_url", path),
-            max_tokens=_integer(parsed, "max_tokens", path),
-            request_timeout_seconds=_number(parsed, "request_timeout_seconds", path),
-            retry_count=_integer(parsed, "retry_count", path),
-            retry_delay_seconds=_number(parsed, "retry_delay_seconds", path),
-            chat_timeout_seconds=_number(parsed, "chat_timeout_seconds", path),
-            history_max_messages=_integer(parsed, "history_max_messages", path),
-            routing_enabled=_boolean_or(
-                parsed, "routing_enabled", initial.routing_enabled, path
-            ),
-            fast_provider=_string_or(
-                parsed, "fast_provider", initial.fast_provider, path
-            ),
-            fast_model=_string_or(
-                parsed, "fast_model", initial.fast_model, path, allow_empty=True
-            ),
-            standard_provider=_string_or(
-                parsed, "standard_provider", initial.standard_provider, path
-            ),
-            standard_model=_string_or(
-                parsed,
-                "standard_model",
-                initial.standard_model,
-                path,
-                allow_empty=True,
-            ),
-            complex_provider=_string_or(
-                parsed, "complex_provider", initial.complex_provider, path
-            ),
-            complex_model=_string_or(
-                parsed, "complex_model", initial.complex_model, path, allow_empty=True
-            ),
-            fallback_provider=_string_or(
-                parsed, "fallback_provider", initial.fallback_provider, path
-            ),
-            fallback_model=_string_or(
-                parsed,
-                "fallback_model",
-                initial.fallback_model,
-                path,
-                allow_empty=True,
-            ),
-            json_prefill_enabled=_boolean_or(
-                parsed,
-                "json_prefill_enabled",
-                initial.json_prefill_enabled,
-                path,
-            ),
-            prompt_cache_enabled=_boolean_or(
-                parsed,
-                "prompt_cache_enabled",
-                initial.prompt_cache_enabled,
-                path,
-            ),
+                provider_name=_string(parsed, "provider_name", path),
+                openrouter_model=_string(parsed, "openrouter_model", path),
+                nvidia_nim_model=_string(parsed, "nvidia_nim_model", path),
+                nvidia_nim_base_url=_string(parsed, "nvidia_nim_base_url", path),
+                max_tokens=_integer(parsed, "max_tokens", path),
+                request_timeout_seconds=_number(parsed, "request_timeout_seconds", path),
+                retry_count=_integer(parsed, "retry_count", path),
+                retry_delay_seconds=_number(parsed, "retry_delay_seconds", path),
+                chat_timeout_seconds=_number(parsed, "chat_timeout_seconds", path),
+                history_max_messages=_integer(parsed, "history_max_messages", path),
+                routing_enabled=_boolean_or(
+                    parsed, "routing_enabled", initial.routing_enabled, path
+                ),
+                fast_provider=_string_or(
+                    parsed, "fast_provider", initial.fast_provider, path
+                ),
+                fast_model=_string_or(
+                    parsed, "fast_model", initial.fast_model, path, allow_empty=True
+                ),
+                standard_provider=_string_or(
+                    parsed, "standard_provider", initial.standard_provider, path
+                ),
+                standard_model=_string_or(
+                    parsed,
+                    "standard_model",
+                    initial.standard_model,
+                    path,
+                    allow_empty=True,
+                ),
+                complex_provider=_string_or(
+                    parsed, "complex_provider", initial.complex_provider, path
+                ),
+                complex_model=_string_or(
+                    parsed,
+                    "complex_model",
+                    initial.complex_model,
+                    path,
+                    allow_empty=True,
+                ),
+                fallback_provider=_string_or(
+                    parsed, "fallback_provider", initial.fallback_provider, path
+                ),
+                fallback_model=_string_or(
+                    parsed,
+                    "fallback_model",
+                    initial.fallback_model,
+                    path,
+                    allow_empty=True,
+                ),
+                json_prefill_enabled=_boolean_or(
+                    parsed,
+                    "json_prefill_enabled",
+                    initial.json_prefill_enabled,
+                    path,
+                ),
+                prompt_cache_enabled=_boolean_or(
+                    parsed,
+                    "prompt_cache_enabled",
+                    initial.prompt_cache_enabled,
+                    path,
+                ),
             )
         )
     )
