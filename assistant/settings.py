@@ -1,5 +1,5 @@
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 
@@ -21,11 +21,21 @@ class AISettings:
     standard_provider: str = "openrouter"
     standard_model: str = "openai/gpt-4o-mini"
     complex_provider: str = "nvidia_nim"
-    complex_model: str = "moonshotai/kimi-k3"
+    complex_model: str = "z-ai/glm-5-3-flash"
     fallback_provider: str = "openrouter"
     fallback_model: str = "openai/gpt-4o-mini"
     json_prefill_enabled: bool = True
     prompt_cache_enabled: bool = True
+
+
+_LEGACY_COMPLEX_MODELS = frozenset({"moonshotai/kimi-k3"})
+_DEFAULT_COMPLEX_MODEL = "z-ai/glm-5-3-flash"
+
+
+def _migrate_legacy_complex_model(settings: AISettings) -> AISettings:
+    if settings.complex_model.strip().casefold() not in _LEGACY_COMPLEX_MODELS:
+        return settings
+    return replace(settings, complex_model=_DEFAULT_COMPLEX_MODEL)
 
 
 def validate_settings(settings: AISettings) -> AISettings:
@@ -67,6 +77,7 @@ def validate_settings(settings: AISettings) -> AISettings:
 
 
 def load_settings(path: Path, initial: AISettings) -> AISettings:
+    initial = _migrate_legacy_complex_model(initial)
     if not path.exists():
         save_settings(path, initial)
         return validate_settings(initial)
@@ -82,7 +93,8 @@ def load_settings(path: Path, initial: AISettings) -> AISettings:
     if not isinstance(parsed, dict):
         raise ValueError(f"Root pengaturan AI harus berupa object: {path.resolve()}")
     return validate_settings(
-        AISettings(
+        _migrate_legacy_complex_model(
+            AISettings(
             provider_name=_string(parsed, "provider_name", path),
             openrouter_model=_string(parsed, "openrouter_model", path),
             nvidia_nim_model=_string(parsed, "nvidia_nim_model", path),
@@ -140,6 +152,7 @@ def load_settings(path: Path, initial: AISettings) -> AISettings:
                 initial.prompt_cache_enabled,
                 path,
             ),
+            )
         )
     )
 
